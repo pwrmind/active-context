@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc",
     "demo": "tsx demo/demo.ts",
+    "cli": "tsx demo/cli.ts",
     "test": "node --test --import tsx tests/*.test.ts"
   },
   "dependencies": {
