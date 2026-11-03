@@ -39,15 +39,20 @@ test('findMessages фильтрует по роли и подстроке', () =
   assert.equal(ctx.findMessages({ query: 'world' }).length, 1);
 });
 
-// --- export / import ---
-
-test('export and import round-trip preserves state', () => {
+test('export and import round-trip preserves state including tool_calls', () => {
   const ctx1 = new LLMContext({ totalTokensLimit: 1000 });
   ctx1.setSystemPrompt('You are helpful');
   ctx1.setReservedTokens(42);
   const id1 = ctx1.appendMessage('user', 'hello');
-  ctx1.appendMessage('assistant', 'hi there');
-  ctx1.appendMessage('tool', '[TOOL_RESULT] ok', { source: 'createTask' });
+  ctx1.appendMessage('assistant', '', {
+    toolCalls: [
+      { id: 'call_1', function: { name: 'createTask', arguments: { title: 'X' } } },
+    ],
+  });
+  ctx1.appendMessage('tool', '[TOOL_RESULT][SUCCESS] ok', {
+    toolCallId: 'call_1',
+    metadata: { source: 'createTask' },
+  });
 
   const data = ctx1.export();
   assert.equal(data.version, 1);
@@ -61,13 +66,10 @@ test('export and import round-trip preserves state', () => {
   assert.equal(ctx2.getSystemPrompt(), 'You are helpful');
   assert.equal(ctx2.stats.reservedTokens, 42);
   assert.equal(ctx2.stats.historyTokens, ctx1.stats.historyTokens);
-  assert.deepEqual(ctx2.toHistoryOnly(), ctx1.toHistoryOnly());
+  assert.deepEqual(ctx2.toPipelineMessages(), ctx1.toPipelineMessages());
 
-  // Восстановленный id доступен через Map — доказательство, что messageMap
-  // пересобран корректно, а не просто скопирован массив.
   const restored = ctx2.getMessageById(id1);
   assert.equal(restored?.content, 'hello');
-  assert.equal(restored?.metadata, undefined); // у user не было metadata
 });
 
 test('export returns a defensive copy', () => {
@@ -96,7 +98,6 @@ test('import rejects unsupported version and keeps state intact', () => {
     /Unsupported context version/,
   );
 
-  // Состояние не должно измениться после неудачного импорта
   assert.equal(ctx.getSystemPrompt(), 'original');
   assert.equal(ctx.findMessages({ role: 'user' }).length, 1);
 });
@@ -120,7 +121,7 @@ test('import rejects invalid messages and keeps state intact', () => {
 });
 
 test('import recalculates tokensCount if missing or zero', () => {
-  const ctx = new LLMContext({ tokenizer: (t) => t.length }); // 1 char = 1 token
+  const ctx = new LLMContext({ tokenizer: (t) => t.length });
   ctx.import({
     version: 1,
     systemPrompt: null,
@@ -130,5 +131,5 @@ test('import recalculates tokensCount if missing or zero', () => {
       { id: 'b', role: 'user', content: 'hi', timestamp: 2, tokensCount: 99 },
     ],
   });
-  assert.equal(ctx.stats.historyTokens, 5 + 99); // 0 пересчитан, 99 сохранён
+  assert.equal(ctx.stats.historyTokens, 5 + 99);
 });

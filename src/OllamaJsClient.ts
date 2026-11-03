@@ -1,16 +1,21 @@
-// src/OllamaJsClient.ts
-import { Ollama, type Message } from 'ollama';
-import type { OllamaClientLike } from './OllamaClient.js';
-import type { OllamaChatRequest, OllamaChatResponse } from './types.js';
+import { Ollama } from 'ollama';
+import type {
+  NativeToolCall,
+  OllamaChatRequest,
+  OllamaChatResponse,
+  OllamaClientLike,
+  StreamChunk,
+} from './types.js';
 
-/**
- * Адаптер над официальной библиотекой `ollama`.
- * Заменяет самописный NDJSON-парсинг, сохраняя контракт `OllamaClientLike`.
- *
- * Важно: `ollama-js` отдаёт `part.message.content` в том же порядке, в котором
- * Ollama шлёт чанки, поэтому `StreamRouter` продолжает корректно ловить
- * границы `<think>` / `<tool_call>`.
- */
+interface RawToolCallChunk {
+  id?: string;
+  function?: {
+    index?: number;
+    name?: string;
+    arguments?: string | Record<string, unknown>;
+  };
+}
+
 export class OllamaJsClient implements OllamaClientLike {
   private readonly client: Ollama;
 
@@ -18,40 +23,117 @@ export class OllamaJsClient implements OllamaClientLike {
     this.client = new Ollama({ host: host ?? 'http://127.0.0.1:11434' });
   }
 
-  async chat(
+  public async chat(
     req: OllamaChatRequest,
     opts: { signal?: AbortSignal } = {},
   ): Promise<OllamaChatResponse> {
     const res = await this.client.chat(
       {
         model: req.model,
-        messages: req.messages as unknown as Message[],
+        messages: req.messages as any,
         options: req.options as any,
+        tools: req.tools as any,
+        think: req.think,
       },
       { signal: opts.signal },
     );
-    // При stream: false ollama-js возвращает ChatResponse с message.content.
-    const content = (res as { message?: { content?: string } }).message?.content ?? '';
-    return { content };
+
+    const msg = (res as any).message ?? {};
+    return {
+      content: typeof msg.content === 'string' ? msg.content : '',
+      thinking: typeof msg.thinking === 'string' ? msg.thinking : '',
+      toolCalls: this.mapToolCalls(msg.tool_calls),
+    };
   }
 
-  async *chatStream(
+  public async *chatStream(
     req: OllamaChatRequest,
     opts: { signal?: AbortSignal } = {},
-  ): AsyncGenerator<string> {
+  ): AsyncGenerator<StreamChunk> {
     const stream = await this.client.chat(
       {
         model: req.model,
-        messages: req.messages as unknown as Message[],
+        messages: req.messages as any,
         options: req.options as any,
+        tools: req.tools as any,
+        think: req.think,
         stream: true,
       },
       { signal: opts.signal },
     );
 
-    for await (const part of stream as AsyncIterable<{ message?: { content?: string } }>) {
-      const chunk = part.message?.content;
-      if (chunk) yield chunk;
+    // Аккумулятор tool_calls: идентификатор — function.index
+    const acc = new Map<number, { id?: string; name?: string; argsJson: string }>();
+
+    for await (const part of stream as AsyncIterable<any>) {
+      const msg = part.message ?? {};
+
+      if (Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls as RawToolCallChunk[]) {
+          const idx = tc.function?.index ?? acc.size;
+          let a = acc.get(idx);
+          if (!a) {
+            a = { argsJson: '' };
+            acc.set(idx, a);
+          }
+          if (tc.id) a.id = tc.id;
+          if (tc.function?.name) a.name = tc.function.name;
+
+          const args = tc.function?.arguments;
+          if (typeof args === 'string') {
+            a.argsJson += args;
+          } else if (args && typeof args === 'object') {
+            a.argsJson = JSON.stringify(args);
+          }
+        }
+      }
+
+      const thinking = typeof msg.thinking === 'string' ? msg.thinking : '';
+      const content = typeof msg.content === 'string' ? msg.content : '';
+      if (thinking || content) {
+        yield { content, thinking, toolCalls: [] };
+      }
     }
+
+    if (acc.size > 0) {
+      const toolCalls: NativeToolCall[] = [];
+      const sorted = [...acc.entries()].sort((x, y) => x[0] - y[0]);
+      for (const [idx, a] of sorted) {
+        if (!a.name) continue;
+        toolCalls.push({
+          id: a.id ?? `call_${idx}`,
+          name: a.name,
+          arguments: safeParseArgs(a.argsJson),
+        });
+      }
+      if (toolCalls.length > 0) {
+        yield { content: '', thinking: '', toolCalls };
+      }
+    }
+  }
+
+  private mapToolCalls(raw: RawToolCallChunk[] | undefined): NativeToolCall[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((tc, i) => {
+      const args = tc.function?.arguments;
+      return {
+        id: tc.id ?? `call_${i}`,
+        name: tc.function?.name ?? '',
+        arguments:
+          typeof args === 'string'
+            ? safeParseArgs(args)
+            : (args ?? {}),
+      };
+    });
+  }
+}
+
+function safeParseArgs(s: string): Record<string, unknown> {
+  if (!s) return {};
+  try {
+    const parsed = JSON.parse(s);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
   }
 }

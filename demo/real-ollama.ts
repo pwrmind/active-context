@@ -1,4 +1,3 @@
-// demo/real-ollama.ts
 import { ActiveContext } from '../src/ActiveContext.js';
 
 async function main(): Promise<void> {
@@ -12,24 +11,21 @@ async function main(): Promise<void> {
     modelName: model,
     baseUrl,
     totalTokensLimit: 8192,
+    think: true,
     options: {
-      num_ctx: 8192,      // синхронизировано с totalTokensLimit
-      temperature: 0.2,   // ниже температура — стабильнее XML
+      num_ctx: 8192,
+      temperature: 0.2,
     },
-    // Раскомментируйте, чтобы диалог переживал перезапуск скрипта:
     // contextPersistPath: './.active-context/session.json',
   });
 
   agent.init(
-    'Ты — автономный ИИ-разработчик. Управляй задачами строго через XML-теги, ' +
-    'как описано в системном контексте Task Manager. Не добавляй пояснений вне тегов, ' +
-    'если не уверен в формате.',
+    'Ты — автономный ИИ-разработчик. Используй предоставленные функции для управления задачами.',
   );
 
   const request =
     'Создай задачу: "Проверить реальный вызов Ollama". ' +
     'В описании укажи, что нужно протестировать стриминг и tool calling.';
-
   console.log(`👤 Пользователь: ${request}\n`);
 
   let thinkingOpen = false;
@@ -51,7 +47,7 @@ async function main(): Promise<void> {
     onToolCall: (r) => {
       closeThinking();
       const icon = r.success ? '✅' : '❌';
-      console.log(`🛠  ${icon} ${r.call.functionName} → ${r.message}`);
+      console.log(`🛠  ${icon} ${r.call.name} → ${r.message}`);
     },
   });
 
@@ -60,7 +56,7 @@ async function main(): Promise<void> {
   console.log(`\n🤖 Ассистент: ${result.content}`);
   console.log(`\n📊 Итераций: ${result.iterations}`);
   console.log(`🛠  Tool calls: ${result.toolCalls.length}`);
-  console.log(`🧠 Thinking (первые 200 символов): ${result.thinking.slice(0, 200)}…`);
+  console.log(`🧠 Thinking: ${result.thinking.slice(0, 200)}…`);
 
   console.log('\n📋 Задачи:');
   for (const t of agent.tasks.getAllTasks()) {
@@ -70,17 +66,10 @@ async function main(): Promise<void> {
   console.log('\n📈 Контекст:');
   console.log(JSON.stringify(agent.getStatus(), null, 2));
 
-  // Гарантируем сохранение, если включён contextPersistPath
   agent.close();
 }
 
 main().catch((err) => {
   console.error('\n💥 Ошибка реального вызова:', err.message);
-  console.error(
-    '\nПроверьте:\n' +
-      '  1. Запущен ли `ollama serve`\n' +
-      `  2. Скачана ли модель: ollama pull ${process.env.OLLAMA_MODEL ?? 'lfm3:latest'}\n` +
-      '  3. Доступен ли порт 11434\n',
-  );
   process.exit(1);
 });

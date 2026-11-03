@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  AppendMessageOptions,
+  ChatMessage,
   ContextMessage,
   ContextStorageStats,
   MessageRole,
@@ -31,8 +33,6 @@ export class LLMContext {
     this.tokenizer = options.tokenizer ?? defaultTokenizer;
   }
 
-  // --- Состояние ---
-
   public get stats(): ContextStorageStats {
     const historyTokens = this.messages.reduce((sum, m) => sum + m.tokensCount, 0);
     const currentTokensUsed = this.systemPromptTokens + this.reservedTokens + historyTokens;
@@ -50,14 +50,10 @@ export class LLMContext {
     return this.stats.currentTokensUsed >= this.totalTokensLimit;
   }
 
-  // --- Резерв под внешние системные блоки (TaskManager, RAG и т.п.) ---
-
   public setReservedTokens(tokens: number): void {
     this.reservedTokens = Math.max(0, tokens);
     this.enforceLimit();
   }
-
-  // --- System Prompt (изолирован) ---
 
   public setSystemPrompt(prompt: string): void {
     this.systemPrompt = prompt;
@@ -69,14 +65,16 @@ export class LLMContext {
     return this.systemPrompt;
   }
 
-  // --- CRUD ---
-
   public appendMessage(
     role: MessageRole,
     content: string,
-    metadata?: Record<string, unknown>,
+    options: AppendMessageOptions = {},
   ): string {
-    const tokensCount = this.tokenizer(content);
+    const toolCallsTokens = options.toolCalls
+      ? this.tokenizer(JSON.stringify(options.toolCalls))
+      : 0;
+    const tokensCount = this.tokenizer(content) + toolCallsTokens;
+
     const id = randomUUID();
     const message: ContextMessage = {
       id,
@@ -84,7 +82,9 @@ export class LLMContext {
       content,
       timestamp: Date.now(),
       tokensCount,
-      metadata,
+      toolCalls: options.toolCalls,
+      toolCallId: options.toolCallId,
+      metadata: options.metadata,
     };
 
     this.messages.push(message);
@@ -127,46 +127,41 @@ export class LLMContext {
     return result;
   }
 
-  // --- Пайплайн ---
-
+  /**
+   * Упрощённое представление без tool_calls — для тестов и инспекции.
+   */
   public toHistoryOnly(): Array<{ role: string; content: string }> {
     return this.messages.map((m) => ({ role: m.role, content: m.content }));
   }
 
-  public toPipelineFormat(): Array<{ role: string; content: string }> {
-    const pipeline: Array<{ role: string; content: string }> = [];
-    if (this.systemPrompt) {
-      pipeline.push({ role: 'system', content: this.systemPrompt });
-    }
-    pipeline.push(...this.toHistoryOnly());
-    return pipeline;
+  /**
+   * Полный pipeline в формате Ollama /api/chat, включая tool_calls и tool_call_id.
+   */
+  public toPipelineMessages(): ChatMessage[] {
+    return this.messages.map((m) => {
+      const msg: ChatMessage = { role: m.role, content: m.content };
+      if (m.toolCalls) msg.tool_calls = m.toolCalls;
+      if (m.toolCallId) msg.tool_call_id = m.toolCallId;
+      return msg;
+    });
   }
 
-  // --- Serialization ---
-
-  /**
-   * Снимок состояния для сохранения на диск.
-   * Возвращает защищённую копию — вызывающий код не может мутировать
-   * внутренние объекты через возвращённую структуру.
-   */
   public export(): SerializedContext {
     return {
       version: 1,
       systemPrompt: this.systemPrompt,
       reservedTokens: this.reservedTokens,
-      messages: this.messages.map((m) => ({ ...m, metadata: m.metadata ? { ...m.metadata } : undefined })),
+      messages: this.messages.map((m) => ({
+        ...m,
+        toolCalls: m.toolCalls?.map((tc) => ({
+          id: tc.id,
+          function: { name: tc.function.name, arguments: { ...tc.function.arguments } },
+        })),
+        metadata: m.metadata ? { ...m.metadata } : undefined,
+      })),
     };
   }
 
-  /**
-   * Восстанавливает состояние из снимка.
-   *
-   * Сначала валидирует весь вход, затем применяет атомарно.
-   * При любой ошибке валидации состояние класса остаётся нетронутым.
-   *
-   * `tokensCount` берётся из снимка, если он положителен; иначе
-   * пересчитывается текущим токенизатором (защита от испорченных данных).
-   */
   public import(data: SerializedContext): void {
     if (!data || typeof data !== 'object') {
       throw new Error('Invalid context data: expected an object');
@@ -197,9 +192,40 @@ export class LLMContext {
           `Invalid message at index ${i}: "role" must be one of ${VALID_ROLES.join(', ')}`,
         );
       }
+
+      let toolCalls: ContextMessage['toolCalls'] | undefined;
+      if (m.toolCalls !== undefined) {
+        if (!Array.isArray(m.toolCalls)) {
+          throw new Error(`Invalid message at index ${i}: "toolCalls" must be an array`);
+        }
+        toolCalls = m.toolCalls.map((tc, j) => {
+          if (!tc || typeof tc !== 'object' || typeof tc.id !== 'string') {
+            throw new Error(`Invalid toolCall at message[${i}].toolCalls[${j}]`);
+          }
+          if (!tc.function || typeof tc.function.name !== 'string') {
+            throw new Error(`Invalid toolCall at message[${i}].toolCalls[${j}].function`);
+          }
+          return {
+            id: tc.id,
+            function: {
+              name: tc.function.name,
+              arguments: tc.function.arguments ?? {},
+            },
+          };
+        });
+      }
+
+      let toolCallId: string | undefined;
+      if (m.toolCallId !== undefined) {
+        if (typeof m.toolCallId !== 'string') {
+          throw new Error(`Invalid message at index ${i}: "toolCallId" must be a string`);
+        }
+        toolCallId = m.toolCallId;
+      }
+
       const storedTokens = typeof m.tokensCount === 'number' && m.tokensCount > 0
         ? m.tokensCount
-        : this.tokenizer(m.content);
+        : this.tokenizer(m.content) + (toolCalls ? this.tokenizer(JSON.stringify(toolCalls)) : 0);
 
       validated.push({
         id: m.id,
@@ -207,11 +233,12 @@ export class LLMContext {
         content: m.content,
         timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
         tokensCount: storedTokens,
+        toolCalls,
+        toolCallId,
         metadata: m.metadata,
       });
     }
 
-    // --- Atomic apply ---
     this.systemPrompt = data.systemPrompt;
     this.systemPromptTokens = data.systemPrompt ? this.tokenizer(data.systemPrompt) : 0;
     this.reservedTokens =
@@ -222,8 +249,6 @@ export class LLMContext {
     this.messageMap = new Map(validated.map((m) => [m.id, m]));
     this.enforceLimit();
   }
-
-  // --- Eviction ---
 
   public evictOldest(tokensToFree: number): ContextMessage[] {
     const evicted: ContextMessage[] = [];
@@ -241,7 +266,6 @@ export class LLMContext {
   public clear(): void {
     this.messages = [];
     this.messageMap.clear();
-    // System prompt и reserved намеренно сохраняются
   }
 
   private enforceLimit(): void {

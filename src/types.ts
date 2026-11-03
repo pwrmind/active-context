@@ -1,12 +1,42 @@
 export type MessageRole = 'user' | 'assistant' | 'tool';
 export type TaskStatus = 'todo' | 'in_progress' | 'completed' | 'failed';
 
+export interface NativeToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: 'object';
+      properties: Record<string, unknown>;
+      required?: string[];
+    };
+  };
+}
+
 export interface ContextMessage {
   readonly id: string;
   readonly role: MessageRole;
   content: string;
   readonly timestamp: number;
   tokensCount: number;
+  toolCalls?: Array<{
+    id: string;
+    function: { name: string; arguments: Record<string, unknown> };
+  }>;
+  toolCallId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AppendMessageOptions {
+  toolCalls?: ContextMessage['toolCalls'];
+  toolCallId?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -19,10 +49,6 @@ export interface ContextStorageStats {
   availableTokens: number;
 }
 
-/**
- * Снимок состояния LLMContext, пригодный для сохранения на диск
- * и восстановления через LLMContext.import().
- */
 export interface SerializedContext {
   version: 1;
   systemPrompt: string | null;
@@ -40,40 +66,48 @@ export interface Task {
   updatedAt: number;
 }
 
-export interface ParsedToolCall {
-  functionName: string;
-  args: Record<string, string>;
-  raw: string;
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: Array<{
+    id: string;
+    function: { name: string; arguments: Record<string, unknown> };
+  }>;
+  tool_call_id?: string;
 }
 
-export interface ParsedResponse {
+export interface StreamChunk {
+  content: string;
   thinking: string;
-  cleaned: string;
-  calls: ParsedToolCall[];
-}
-
-export interface ToolExecutionResult {
-  call: ParsedToolCall;
-  success: boolean;
-  message: string;
+  toolCalls: NativeToolCall[];
 }
 
 export interface OllamaChatRequest {
   model: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: ChatMessage[];
   options?: Record<string, unknown>;
+  tools?: ToolDefinition[];
+  think?: boolean;
 }
 
 export interface OllamaChatResponse {
   content: string;
+  thinking: string;
+  toolCalls: NativeToolCall[];
+}
+
+export interface OllamaClientLike {
+  chat(req: OllamaChatRequest, opts?: { signal?: AbortSignal }): Promise<OllamaChatResponse>;
+  chatStream(req: OllamaChatRequest, opts?: { signal?: AbortSignal }): AsyncGenerator<StreamChunk>;
 }
 
 export type TokenizerFn = (text: string) => number;
 
-export type StreamEvent =
-  | { type: 'thinking'; text: string }
-  | { type: 'content'; text: string }
-  | { type: 'tool_call'; text: string };
+export interface ToolExecutionResult {
+  call: NativeToolCall;
+  success: boolean;
+  message: string;
+}
 
 export interface AskOptions {
   onThinking?: (chunk: string) => void;
@@ -92,3 +126,21 @@ export interface AskResult {
   iterations: number;
   stats: ContextStorageStats;
 }
+
+// Legacy (only used by LFM3Parser / StreamRouter)
+export interface ParsedToolCall {
+  functionName: string;
+  args: Record<string, string>;
+  raw: string;
+}
+
+export interface ParsedResponse {
+  thinking: string;
+  cleaned: string;
+  calls: ParsedToolCall[];
+}
+
+export type StreamEvent =
+  | { type: 'thinking'; text: string }
+  | { type: 'content'; text: string }
+  | { type: 'tool_call'; text: string };

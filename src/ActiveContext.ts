@@ -2,45 +2,89 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path';
 import { MaxIterationsError, ValidationError } from './errors.js';
 import { LLMContext } from './LLMContext.js';
-import { LFM3Parser } from './parser.js';
-import { StreamRouter } from './stream.js';
 import { TaskManager } from './TaskManager.js';
 import { defaultTokenizer } from './tokenizer.js';
 import { MessageValidator } from './validator.js';
-import type { OllamaClientLike } from './OllamaClient.js';
+import type { OllamaClientLike } from './types.js';
 import type {
   AskOptions,
   AskResult,
+  ChatMessage,
   ContextStorageStats,
-  ParsedToolCall,
+  NativeToolCall,
+  OllamaChatRequest,
+  OllamaChatResponse,
   SerializedContext,
-  StreamEvent,
+  StreamChunk,
+  ToolDefinition,
   ToolExecutionResult,
   TokenizerFn,
 } from './types.js';
 
+const TASK_TOOLS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'createTask',
+      description: 'Create a new task with a title and optional description.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Short task title' },
+          description: { type: 'string', description: 'Optional detailed description' },
+        },
+        required: ['title'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'updateTaskStatus',
+      description: 'Update the status of an existing task, optionally recording a result.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Task ID from CURRENT TASKS STATE' },
+          status: {
+            type: 'string',
+            enum: ['todo', 'in_progress', 'completed', 'failed'],
+          },
+          result: { type: 'string', description: 'Optional execution result report' },
+        },
+        required: ['id', 'status'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'deleteTask',
+      description: 'Delete an existing task by ID.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'listTasks',
+      description: 'List all tasks with their current status.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+];
+
 const TASK_API_INSTRUCTION = `[TASK MANAGER MODULE ACTIVE]
-You have access to a built-in Task Manager. You MUST use the following XML format to interact with tasks.
-
-Format for reasoning (optional, hidden from user):
-<think>your reasoning here</think>
-
-Format for tool calls (required for actions):
-<tool_call><function=FUNCTION_NAME><parameter=PARAM>value</parameter></function></tool_call>
-
-Available functions:
-1. createTask
-   Parameters: title (required), description (optional)
-2. updateTaskStatus
-   Parameters: id (required), status (required: todo | in_progress | completed | failed), result (optional)
-3. deleteTask
-   Parameters: id (required)
-4. listTasks
-   No parameters.
+You have access to a Task Manager via native function calls (tools). Use the provided tools for all task operations.
 
 Rules:
-- Never hallucinate task IDs. Only use IDs from CURRENT TASKS STATE.
-- Always place your reasoning inside <think> tags before tool calls.
+- Never invent task IDs. Only use IDs from CURRENT TASKS STATE below.
 - After receiving tool results, provide a concise final answer to the user.`;
 
 export interface ActiveContextConfig {
@@ -48,8 +92,11 @@ export interface ActiveContextConfig {
   baseUrl?: string;
   totalTokensLimit?: number;
   options?: Record<string, unknown>;
-  /** Если задан — история диалога и system prompt сохраняются в этот JSON-файл. */
   contextPersistPath?: string;
+  /** Enable native thinking. Default true (LFM3). Set false for models without thinking. */
+  think?: boolean;
+  /** Override tool definitions. Defaults to TASK_TOOLS. */
+  tools?: ToolDefinition[];
 }
 
 export interface ActiveContextDeps {
@@ -65,7 +112,7 @@ export class ActiveContext {
   private readonly tokenizer: TokenizerFn;
   private readonly validator: MessageValidator;
   private readonly config: Required<Pick<ActiveContextConfig, 'modelName' | 'baseUrl'>> &
-    ActiveContextConfig;
+    ActiveContextConfig & { think: boolean; tools: ToolDefinition[] };
 
   private ollama: OllamaClientLike | null;
   private readonly contextPersistPath?: string;
@@ -73,7 +120,12 @@ export class ActiveContext {
 
   constructor(config: ActiveContextConfig, deps: ActiveContextDeps = {}) {
     const baseUrl = config.baseUrl ?? 'http://127.0.0.1:11434';
-    this.config = { ...config, baseUrl };
+    this.config = {
+      ...config,
+      baseUrl,
+      think: config.think ?? true,
+      tools: config.tools ?? TASK_TOOLS,
+    };
     this.tokenizer = deps.tokenizer ?? defaultTokenizer;
     this.validator = deps.validator ?? new MessageValidator();
     this.context = new LLMContext({
@@ -84,9 +136,7 @@ export class ActiveContext {
     this.ollama = deps.ollamaClient ?? null;
     this.contextPersistPath = config.contextPersistPath;
 
-    if (this.contextPersistPath) {
-      this.loadContext();
-    }
+    if (this.contextPersistPath) this.loadContext();
   }
 
   public init(systemPrompt: string): void {
@@ -106,10 +156,6 @@ export class ActiveContext {
     return this.context.stats;
   }
 
-  /**
-   * Принудительно сбрасывает отложенные сохранения контекста и задач на диск.
-   * Полезно в тестах и перед `process.exit()`.
-   */
   public flush(): void {
     if (this.contextSaveTimer) {
       clearTimeout(this.contextSaveTimer);
@@ -119,16 +165,10 @@ export class ActiveContext {
     this.taskManager.flush();
   }
 
-  /**
-   * Семантический алиас для graceful shutdown.
-   */
   public close(): void {
     this.flush();
   }
 
-  /**
-   * Главный цикл агента: запрос → tool calls → повторный запрос → финальный ответ.
-   */
   public async ask(userMessage: string, options: AskOptions = {}): Promise<AskResult> {
     if (!options.allowUnsafe) {
       const v = this.validator.validate(userMessage);
@@ -151,27 +191,36 @@ export class ActiveContext {
 
       this.refreshReservedTokens();
       const messages = this.assemblePipelineMessages();
-      const { raw, bufferedContent } = await this.callOllama(messages, options);
+      const response = await this.callOllama(messages, options);
 
-      const parsed = LFM3Parser.parseAll(raw);
-      if (parsed.thinking) allThinking.push(parsed.thinking);
+      const hasToolCalls = response.toolCalls.length > 0;
 
-      this.context.appendMessage('assistant', raw);
-      this.scheduleContextSave();
+      if (response.thinking) allThinking.push(response.thinking);
 
-      if (parsed.calls.length === 0) {
-        finalContent = parsed.cleaned;
-        if (options.onContent && bufferedContent && options.streamMode !== 'realtime') {
-          options.onContent(bufferedContent);
-        }
+      if (response.content || response.thinking || hasToolCalls) {
+        this.context.appendMessage('assistant', response.content, {
+          toolCalls: hasToolCalls
+            ? response.toolCalls.map((tc) => ({
+                id: tc.id,
+                function: { name: tc.name, arguments: tc.arguments },
+              }))
+            : undefined,
+        });
+        this.scheduleContextSave();
+      }
+
+      if (!hasToolCalls) {
+        finalContent = response.content;
         break;
       }
 
-      const results = await this.executeToolCalls(parsed.calls, options);
-      allToolResults.push(...results);
-
-      for (const r of results) {
-        this.context.appendMessage('tool', this.formatToolResultMessage(r));
+      for (const tc of response.toolCalls) {
+        const result = this.executeNativeToolCall(tc);
+        allToolResults.push(result);
+        options.onToolCall?.(result);
+        this.context.appendMessage('tool', this.formatToolResultMessage(result), {
+          toolCallId: tc.id,
+        });
       }
       this.scheduleContextSave();
     }
@@ -191,8 +240,8 @@ export class ActiveContext {
 
   // --- Внутренние ---
 
-  private assemblePipelineMessages(): Array<{ role: string; content: string }> {
-    const pipeline: Array<{ role: string; content: string }> = [];
+  private assemblePipelineMessages(): ChatMessage[] {
+    const pipeline: ChatMessage[] = [];
 
     const basePrompt = this.context.getSystemPrompt();
     if (basePrompt) pipeline.push({ role: 'system', content: basePrompt });
@@ -203,7 +252,7 @@ export class ActiveContext {
       content: `${TASK_API_INSTRUCTION}\n\nCURRENT TASKS STATE:\n${taskState}`,
     });
 
-    pipeline.push(...this.context.toHistoryOnly());
+    pipeline.push(...this.context.toPipelineMessages());
 
     return pipeline;
   }
@@ -211,12 +260,12 @@ export class ActiveContext {
   private refreshReservedTokens(): void {
     const taskState = this.taskManager.getTaskContextForLLM();
     const combined = `${TASK_API_INSTRUCTION}\n\nCURRENT TASKS STATE:\n${taskState}`;
-    this.context.setReservedTokens(this.tokenizer(combined));
+    const toolsTokens = this.tokenizer(JSON.stringify(this.config.tools));
+    this.context.setReservedTokens(this.tokenizer(combined) + toolsTokens);
   }
 
   private async ensureClient(): Promise<OllamaClientLike> {
     if (this.ollama) return this.ollama;
-
     let mod: typeof import('./OllamaJsClient.js');
     try {
       mod = await import('./OllamaJsClient.js');
@@ -232,86 +281,83 @@ export class ActiveContext {
   }
 
   private async callOllama(
-    messages: Array<{ role: string; content: string }>,
+    messages: ChatMessage[],
     options: AskOptions,
-  ): Promise<{ raw: string; bufferedContent: string }> {
+  ): Promise<OllamaChatResponse> {
     const client = await this.ensureClient();
     const shouldStream = !!(options.onThinking || options.onContent);
-    const req = {
+    const req: OllamaChatRequest = {
       model: this.config.modelName,
       messages,
       options: this.config.options,
+      tools: this.config.tools,
+      think: this.config.think,
     };
 
     if (!shouldStream) {
-      const res = await client.chat(req, { signal: options.signal });
-      return { raw: res.content, bufferedContent: '' };
+      return await client.chat(req, { signal: options.signal });
     }
 
-    const router = new StreamRouter();
-    let raw = '';
-    let bufferedContent = '';
+    let content = '';
+    let thinking = '';
+    const toolCalls: NativeToolCall[] = [];
     const realtime = options.streamMode === 'realtime';
 
-    const handle = (ev: StreamEvent): void => {
-      if (ev.type === 'thinking') {
-        options.onThinking?.(ev.text);
-      } else if (ev.type === 'content') {
-        bufferedContent += ev.text;
-        if (realtime) options.onContent?.(ev.text);
-      }
-    };
-
     for await (const chunk of client.chatStream(req, { signal: options.signal })) {
-      raw += chunk;
-      for (const ev of router.push(chunk)) handle(ev);
-    }
-    for (const ev of router.flush()) handle(ev);
-
-    return { raw, bufferedContent };
-  }
-
-  private async executeToolCalls(
-    calls: ParsedToolCall[],
-    options: AskOptions,
-  ): Promise<ToolExecutionResult[]> {
-    const results: ToolExecutionResult[] = [];
-
-    for (const call of calls) {
-      let result: ToolExecutionResult;
-      try {
-        result = { call, success: true, message: this.dispatchTool(call) };
-      } catch (err) {
-        result = {
-          call,
-          success: false,
-          message: err instanceof Error ? err.message : String(err),
-        };
+      if (chunk.thinking) {
+        thinking += chunk.thinking;
+        options.onThinking?.(chunk.thinking);
       }
-      results.push(result);
-      options.onToolCall?.(result);
+      if (chunk.content) {
+        content += chunk.content;
+        if (realtime) options.onContent?.(chunk.content);
+      }
+      if (chunk.toolCalls.length > 0) {
+        toolCalls.push(...chunk.toolCalls);
+      }
     }
 
-    return results;
+    if (options.onContent && content && !realtime) {
+      options.onContent(content);
+    }
+
+    return { content, thinking, toolCalls };
   }
 
-  private dispatchTool(call: ParsedToolCall): string {
-    switch (call.functionName) {
+  private executeNativeToolCall(call: NativeToolCall): ToolExecutionResult {
+    try {
+      return { call, success: true, message: this.dispatchTool(call) };
+    } catch (err) {
+      return {
+        call,
+        success: false,
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  private dispatchTool(call: NativeToolCall): string {
+    const args = call.arguments;
+    switch (call.name) {
       case 'createTask': {
-        const title = call.args.title;
+        const title = typeof args.title === 'string' ? args.title : '';
+        const description =
+          typeof args.description === 'string' ? args.description : undefined;
         if (!title) throw new Error('createTask: "title" parameter is required');
-        const task = this.taskManager.createTask(title, call.args.description);
+        const task = this.taskManager.createTask(title, description);
         return `Task created with ID ${task.id}`;
       }
       case 'updateTaskStatus': {
-        const { id, status, result } = call.args;
+        const id = typeof args.id === 'string' ? args.id : '';
+        const status = typeof args.status === 'string' ? args.status : '';
+        const result = typeof args.result === 'string' ? args.result : undefined;
         if (!id) throw new Error('updateTaskStatus: "id" parameter is required');
         if (!status) throw new Error('updateTaskStatus: "status" parameter is required');
         const updated = this.taskManager.updateTaskStatus(id, status as any, result);
         return `Task ${updated.id} updated to status "${updated.status}"`;
       }
       case 'deleteTask': {
-        const { id } = call.args;
+        const id = typeof args.id === 'string' ? args.id : '';
         if (!id) throw new Error('deleteTask: "id" parameter is required');
         const deleted = this.taskManager.deleteTask(id);
         if (!deleted) throw new Error(`Task ${id} not found`);
@@ -324,13 +370,13 @@ export class ActiveContext {
           : all.map((t) => `[${t.id}] ${t.title} — ${t.status}`).join('\n');
       }
       default:
-        throw new Error(`Unknown function: ${call.functionName}`);
+        throw new Error(`Unknown function: ${call.name}`);
     }
   }
 
   private formatToolResultMessage(r: ToolExecutionResult): string {
     const tag = r.success ? 'SUCCESS' : 'ERROR';
-    return `[TOOL_RESULT][${tag}][${r.call.functionName}] ${r.message}`;
+    return `[TOOL_RESULT][${tag}][${r.call.name}] ${r.message}`;
   }
 
   // --- Persistence ---

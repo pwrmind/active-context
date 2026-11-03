@@ -1,43 +1,51 @@
 import { ActiveContext } from '../src/ActiveContext.js';
-import type { OllamaClientLike } from '../src/OllamaClient.js';
+import type {
+  OllamaChatResponse,
+  OllamaClientLike,
+  StreamChunk,
+} from '../src/types.js';
 
-// Скриптованный клиент для демонстрации работы агента без запущенной Ollama.
-// Возвращает tool call на первой итерации и финальный текст — на второй.
 class MockOllamaClient implements OllamaClientLike {
   private callCount = 0;
 
-  async chat(_req: any): Promise<{ content: string }> {
+  async chat(): Promise<OllamaChatResponse> {
     this.callCount++;
     if (this.callCount === 1) {
       return {
-        content: [
-          '<think>',
-          'Пользователь просит создать задачу. Использую функцию createTask.',
-          '</think>',
-          '<tool_call>',
-          '<function=createTask>',
-          '<parameter=title>Написать тесты для модуля авторизации</parameter>',
-          '<parameter=description>Тесты должны покрывать JWT-сценарии</parameter>',
-          '</function>',
-          '</tool_call>',
-        ].join(''),
+        content: '',
+        thinking: 'Пользователь просит создать задачу. Вызываю createTask.',
+        toolCalls: [
+          {
+            id: 'call_1',
+            name: 'createTask',
+            arguments: {
+              title: 'Написать тесты для модуля авторизации',
+              description: 'Тесты должны покрывать JWT-сценарии',
+            },
+          },
+        ],
       };
     }
     return {
-      content: [
-        '<think>',
-        'Задача успешно создана, ID получен. Отвечаю пользователю кратко.',
-        '</think>',
+      content:
         'Готово: создал задачу на написание тестов для модуля авторизации с фокусом на JWT.',
-      ].join(''),
+      thinking: 'Задача успешно создана, ID получен. Отвечаю пользователю кратко.',
+      toolCalls: [],
     };
   }
 
-  async *chatStream(req: any): AsyncGenerator<string> {
-    const { content } = await this.chat(req);
-    // Разбиваем на куски по границам символов, чтобы эмулировать стриминг
-    const chunks = content.match(/.{1,20}/gs) ?? [content];
-    for (const c of chunks) yield c;
+  async *chatStream(): AsyncGenerator<StreamChunk> {
+    const res = await this.chat();
+    // Эмулируем стриминг thinking по словам
+    if (res.thinking) {
+      for (const word of res.thinking.split(/(\s+)/)) {
+        if (word) yield { content: '', thinking: word, toolCalls: [] };
+      }
+    }
+    if (res.content) yield { content: res.content, thinking: '', toolCalls: [] };
+    if (res.toolCalls.length > 0) {
+      yield { content: '', thinking: '', toolCalls: res.toolCalls };
+    }
   }
 }
 
@@ -48,6 +56,7 @@ async function main(): Promise<void> {
     {
       modelName: 'lfm3:latest',
       totalTokensLimit: 4096,
+      think: true,
     },
     { ollamaClient: new MockOllamaClient() },
   );
@@ -58,8 +67,6 @@ async function main(): Promise<void> {
     'Создай задачу на написание тестов для модуля авторизации. Тесты должны покрывать JWT.';
   console.log(`👤 Пользователь: ${request}\n`);
 
-  // Управление потоковым выводом thinking:
-  // префикс "🧠 " печатается один раз, далее текст идёт инлайн.
   let thinkingOpen = false;
   const closeThinking = (): void => {
     if (thinkingOpen) {
@@ -79,7 +86,7 @@ async function main(): Promise<void> {
     onToolCall: (r) => {
       closeThinking();
       const icon = r.success ? '✅' : '❌';
-      console.log(`🛠  ${icon} ${r.call.functionName} → ${r.message}`);
+      console.log(`🛠  ${icon} ${r.call.name} → ${r.message}`);
     },
   });
 
