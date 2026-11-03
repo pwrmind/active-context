@@ -65,3 +65,25 @@ test('sanitizes task fields in LLM context', () => {
   assert.ok(!ctx.includes('<bad>'));
   assert.ok(!ctx.includes(']brackets['));
 });
+
+test('createTask with parentId links subtask', () => {
+  const tm = new TaskManager();
+  const parent = tm.createTask('Parent');
+  const child = tm.createTask('Child', 'details', parent.id);
+  assert.equal(child.parentId, parent.id);
+  assert.equal(tm.getChildren(parent.id).length, 1);
+  assert.equal(tm.getChildren(parent.id)[0].id, child.id);
+});
+
+test('createTask rejects unknown parentId', () => {
+  const tm = new TaskManager();
+  assert.throws(() => tm.createTask('Orphan', undefined, 'nonexistent'), /Parent task/);
+});
+
+test('parentId appears in LLM context', () => {
+  const tm = new TaskManager();
+  const parent = tm.createTask('Parent');
+  tm.createTask('Child', undefined, parent.id);
+  const ctx = tm.getTaskContextForLLM();
+  assert.match(ctx, new RegExp(`parent=${parent.id}`));
+});

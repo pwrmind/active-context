@@ -5,6 +5,7 @@ import type {
   ContextMessage,
   ContextStorageStats,
   MessageRole,
+  SearchMessagesOptions,
   SerializedContext,
   TokenizerFn,
 } from './types.js';
@@ -16,6 +17,7 @@ export interface LLMContextOptions {
 }
 
 const VALID_ROLES: MessageRole[] = ['user', 'assistant', 'tool'];
+const MAX_PATTERN_LENGTH = 200;
 
 export class LLMContext {
   private systemPrompt: string | null = null;
@@ -97,8 +99,23 @@ export class LLMContext {
     return this.messageMap.get(id);
   }
 
+  /**
+   * Возвращает сообщение по ID или префиксу ID (удобно для модели: полные UUID
+   * длинные, а в tool-result мы отдаём короткие 8-символьные префиксы).
+   * Если префикс совпал с несколькими — выбирает первое совпадение.
+   */
+  public resolveMessageId(input: string): ContextMessage | undefined {
+    const direct = this.messageMap.get(input);
+    if (direct) return direct;
+    if (input.length < 4) return undefined;
+    for (const m of this.messages) {
+      if (m.id.startsWith(input)) return m;
+    }
+    return undefined;
+  }
+
   public updateMessageContent(id: string, newContent: string): void {
-    const msg = this.messageMap.get(id);
+    const msg = this.resolveMessageId(id);
     if (!msg) throw new Error(`Message ${id} not found`);
     msg.content = newContent;
     msg.tokensCount = this.tokenizer(newContent);
@@ -106,37 +123,48 @@ export class LLMContext {
   }
 
   public deleteMessage(id: string): boolean {
-    if (!this.messageMap.has(id)) return false;
-    this.messageMap.delete(id);
-    this.messages = this.messages.filter((m) => m.id !== id);
+    const msg = this.resolveMessageId(id);
+    if (!msg) return false;
+    this.messageMap.delete(msg.id);
+    this.messages = this.messages.filter((m) => m.id !== msg.id);
     return true;
   }
 
-  public findMessages(options: {
-    query?: string;
-    role?: MessageRole;
-    limit?: number;
-  }): ContextMessage[] {
+  public findMessages(options: SearchMessagesOptions = {}): ContextMessage[] {
     let result = this.messages;
-    if (options.role) result = result.filter((m) => m.role === options.role);
-    if (options.query) {
+
+    if (options.role) {
+      result = result.filter((m) => m.role === options.role);
+    }
+
+    if (options.pattern !== undefined) {
+      if (options.pattern.length > MAX_PATTERN_LENGTH) {
+        throw new Error(
+          `Regex pattern too long: ${options.pattern.length} chars (max ${MAX_PATTERN_LENGTH})`,
+        );
+      }
+      let re: RegExp;
+      try {
+        re = new RegExp(options.pattern, 'i');
+      } catch (e) {
+        throw new Error(`Invalid regex pattern: ${(e as Error).message}`);
+      }
+      result = result.filter((m) => re.test(m.content));
+    } else if (options.query) {
       const q = options.query.toLowerCase();
       result = result.filter((m) => m.content.toLowerCase().includes(q));
     }
-    if (options.limit && options.limit > 0) result = result.slice(-options.limit);
+
+    if (options.limit !== undefined && options.limit > 0) {
+      result = result.slice(-options.limit);
+    }
     return result;
   }
 
-  /**
-   * Упрощённое представление без tool_calls — для тестов и инспекции.
-   */
   public toHistoryOnly(): Array<{ role: string; content: string }> {
     return this.messages.map((m) => ({ role: m.role, content: m.content }));
   }
 
-  /**
-   * Полный pipeline в формате Ollama /api/chat, включая tool_calls и tool_call_id.
-   */
   public toPipelineMessages(): ChatMessage[] {
     return this.messages.map((m) => {
       const msg: ChatMessage = { role: m.role, content: m.content };
@@ -207,10 +235,7 @@ export class LLMContext {
           }
           return {
             id: tc.id,
-            function: {
-              name: tc.function.name,
-              arguments: tc.function.arguments ?? {},
-            },
+            function: { name: tc.function.name, arguments: tc.function.arguments ?? {} },
           };
         });
       }

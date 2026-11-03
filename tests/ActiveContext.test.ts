@@ -243,3 +243,154 @@ test('reservedTokens includes tools schema', async () => {
     'reservedTokens must cover tools schema',
   );
 });
+
+test('getMessageById tool returns message by id', async () => {
+  // Паттерн 'technique' есть только в засеянном сообщении и отсутствует
+  // в user-запросе ниже → ровно 1 match.
+  const scriptedMessages: Array<{ content: string; thinking: string; toolCalls: any[] }> = [
+    {
+      content: '',
+      thinking: '',
+      toolCalls: [
+        { id: 'c1', name: 'searchMessages', arguments: { pattern: 'technique' } },
+      ],
+    },
+    {
+      content: '',
+      thinking: '',
+      toolCalls: [
+        { id: 'c2', name: 'getMessageById', arguments: { id: '__RESOLVED__' } },
+      ],
+    },
+    { content: 'Нашёл в истории.', thinking: '', toolCalls: [] },
+  ];
+
+  class SearchAwareClient implements OllamaClientLike {
+    private step = 0;
+    constructor(public ref: { agent?: any }) {}
+
+    async chat(): Promise<OllamaChatResponse> {
+      const s = scriptedMessages[this.step++];
+      // На второй итерации подставляем реальный 8-символьный префикс
+      // ID найденного сообщения (в tool-result он именно в таком виде).
+      if (this.step === 2) {
+        const hist = this.ref.agent
+          .getContext()
+          .findMessages({ pattern: 'technique', role: 'user' });
+        const id8 = hist.length > 0 ? hist[0].id.slice(0, 8) : 'missing';
+        s.toolCalls[0].arguments.id = id8;
+      }
+      return s;
+    }
+
+    async *chatStream(): AsyncGenerator<StreamChunk> {
+      const r = await this.chat();
+      if (r.toolCalls.length > 0) {
+        yield { content: '', thinking: '', toolCalls: r.toolCalls };
+      } else {
+        yield { content: r.content, thinking: '', toolCalls: [] };
+      }
+    }
+  }
+
+  const ref: { agent?: any } = {};
+  const client = new SearchAwareClient(ref);
+  const agent = new ActiveContext({ modelName: 'test' }, { ollamaClient: client });
+  ref.agent = agent;
+  agent.init('helper');
+
+  // Засеваем историю ДО ask() — эти сообщения не содержат 'technique' в запросе
+  agent.getContext().appendMessage('user', 'I like to use memory palace technique');
+  agent.getContext().appendMessage('assistant', 'Noted');
+
+  // Запрос НЕ содержит 'technique' → searchMessages вернёт ровно 1
+  const result = await agent.ask('Найди что я говорил про palace');
+
+  assert.equal(result.toolCalls.length, 2);
+
+  assert.equal(result.toolCalls[0].call.name, 'searchMessages');
+  assert.equal(result.toolCalls[0].success, true);
+  assert.match(result.toolCalls[0].message, /Found 1 message/);
+  assert.match(result.toolCalls[0].message, /memory palace technique/);
+
+  assert.equal(result.toolCalls[1].call.name, 'getMessageById');
+  assert.equal(result.toolCalls[1].success, true);
+  assert.match(result.toolCalls[1].message, /memory palace technique/);
+});
+
+test('searchMessages with invalid regex returns error tool result, not throw', async () => {
+  const client = new ScriptedClient([
+    {
+      toolCalls: [
+        { id: 'c1', name: 'searchMessages', arguments: { pattern: '[unclosed' } },
+      ],
+    },
+    { content: 'Ошибка в regex, попробую иначе.', thinking: '' },
+  ]);
+  const agent = new ActiveContext({ modelName: 'test' }, { ollamaClient: client });
+  const result = await agent.ask('search [unclosed');
+  assert.equal(result.toolCalls[0].success, false);
+  assert.match(result.toolCalls[0].message, /Invalid regex/);
+});
+
+test('createTask with parentId links subtask via tool call', async () => {
+  const client = new ScriptedClient([
+    {
+      toolCalls: [
+        { id: 'c1', name: 'createTask', arguments: { title: 'Parent' } },
+      ],
+    },
+    { content: '', thinking: '', toolCalls: [] },
+  ]);
+  const agent = new ActiveContext({ modelName: 'test' }, { ollamaClient: client });
+  await agent.ask('create parent');
+  const parent = agent.tasks.getAllTasks()[0];
+
+  const client2 = new ScriptedClient([
+    {
+      toolCalls: [
+        { id: 'c2', name: 'createTask', arguments: { title: 'Child', parentId: parent.id } },
+      ],
+    },
+    { content: 'done', thinking: '' },
+  ]);
+  const agent2 = new ActiveContext({ modelName: 'test' }, { ollamaClient: client2, taskManager: agent.tasks });
+  const r = await agent2.ask('create child');
+  const tasks = agent.tasks.getAllTasks();
+  const child = tasks.find((t) => t.title === 'Child')!;
+  assert.equal(child.parentId, parent.id);
+  assert.equal(r.toolCalls[0].success, true);
+});
+
+test('listTasks tool includes count header', async () => {
+  const client = new ScriptedClient([
+    { toolCalls: [{ id: 'c1', name: 'listTasks', arguments: {} }] },
+    { content: 'ok', thinking: '' },
+  ]);
+  const agent = new ActiveContext({ modelName: 'test' }, { ollamaClient: client });
+  agent.tasks.createTask('One');
+  agent.tasks.createTask('Two');
+  const result = await agent.ask('list');
+  assert.match(result.toolCalls[0].message, /Tasks \(2\):/);
+});
+
+test('setThink toggles isThinking and passes to Ollama', async () => {
+  let lastThink: boolean | undefined;
+  const client: OllamaClientLike = {
+    async chat(req) {
+      lastThink = req.think;
+      return { content: 'ok', thinking: '', toolCalls: [] };
+    },
+    async *chatStream() {
+      yield { content: 'ok', thinking: '', toolCalls: [] };
+    },
+  };
+  const agent = new ActiveContext({ modelName: 'test', think: true }, { ollamaClient: client });
+  assert.equal(agent.isThinking(), true);
+  await agent.ask('a');
+  assert.equal(lastThink, true);
+  agent.setThink(false);
+  assert.equal(agent.isThinking(), false);
+  await agent.ask('b');
+  assert.equal(lastThink, false);
+});

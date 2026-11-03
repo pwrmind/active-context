@@ -5,33 +5,94 @@ import { LLMContext } from './LLMContext.js';
 import { TaskManager } from './TaskManager.js';
 import { defaultTokenizer } from './tokenizer.js';
 import { MessageValidator } from './validator.js';
-import type { OllamaClientLike } from './types.js';
 import type {
   AskOptions,
   AskResult,
   ChatMessage,
+  ContextMessage,
   ContextStorageStats,
+  MessageRole,
   NativeToolCall,
   OllamaChatRequest,
   OllamaChatResponse,
+  OllamaClientLike,
   SerializedContext,
-  StreamChunk,
+  Task,
   ToolDefinition,
   ToolExecutionResult,
   TokenizerFn,
 } from './types.js';
+
+// ---------- Tools ----------
+
+const CORE_TOOLS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'getMessageById',
+      description:
+        'Retrieve the full text of a conversation message by its ID (or a unique prefix). ' +
+        'Use this after searchMessages to read a matched message in full.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'Message ID or unique prefix (e.g. first 8 chars)',
+          },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'searchMessages',
+      description:
+        'Search conversation history with a case-insensitive regular expression. ' +
+        'Returns a compact list of matching messages (ID, role, timestamp, truncated text). ' +
+        'Use getMessageById to read a specific message in full.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: {
+            type: 'string',
+            description: 'Regex pattern (case-insensitive, max 200 chars)',
+          },
+          role: {
+            type: 'string',
+            enum: ['user', 'assistant', 'tool'],
+            description: 'Optional filter by role',
+          },
+          limit: {
+            type: 'number',
+            description: 'Max results (default 20, max 50)',
+          },
+        },
+        required: ['pattern'],
+      },
+    },
+  },
+];
 
 const TASK_TOOLS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
       name: 'createTask',
-      description: 'Create a new task with a title and optional description.',
+      description:
+        'Create a new task. When decomposing a larger task into steps, create one task per step ' +
+        'and set parentId to the parent task ID.',
       parameters: {
         type: 'object',
         properties: {
           title: { type: 'string', description: 'Short task title' },
           description: { type: 'string', description: 'Optional detailed description' },
+          parentId: {
+            type: 'string',
+            description: 'Optional parent task ID for sub-task decomposition',
+          },
         },
         required: ['title'],
       },
@@ -63,9 +124,7 @@ const TASK_TOOLS: ToolDefinition[] = [
       description: 'Delete an existing task by ID.',
       parameters: {
         type: 'object',
-        properties: {
-          id: { type: 'string' },
-        },
+        properties: { id: { type: 'string' } },
         required: ['id'],
       },
     },
@@ -80,12 +139,25 @@ const TASK_TOOLS: ToolDefinition[] = [
   },
 ];
 
-const TASK_API_INSTRUCTION = `[TASK MANAGER MODULE ACTIVE]
-You have access to a Task Manager via native function calls (tools). Use the provided tools for all task operations.
+const DEFAULT_TOOLS: ToolDefinition[] = [...CORE_TOOLS, ...TASK_TOOLS];
+
+const SYSTEM_INSTRUCTION = `[ACTIVE CONTEXT — TOOLS ACTIVE]
+You have access to native tools for tasks and conversation history.
+
+Task tools:     createTask, updateTaskStatus, deleteTask, listTasks
+Context tools:  searchMessages, getMessageById
 
 Rules:
 - Never invent task IDs. Only use IDs from CURRENT TASKS STATE below.
+- When the user asks to "decompose", "plan", or "break down" a task into steps,
+  create ONE TASK PER STEP via createTask, and set parentId to the parent task ID.
+  Do not output steps only as prose.
+- When the user asks "what would be the structure" or "what blocks", answer in text
+  unless they explicitly ask to create tasks.
+- Use searchMessages to look up prior conversation content by regex when needed.
 - After receiving tool results, provide a concise final answer to the user.`;
+
+// ---------- Config ----------
 
 export interface ActiveContextConfig {
   modelName: string;
@@ -93,9 +165,7 @@ export interface ActiveContextConfig {
   totalTokensLimit?: number;
   options?: Record<string, unknown>;
   contextPersistPath?: string;
-  /** Enable native thinking. Default true (LFM3). Set false for models without thinking. */
   think?: boolean;
-  /** Override tool definitions. Defaults to TASK_TOOLS. */
   tools?: ToolDefinition[];
 }
 
@@ -106,13 +176,36 @@ export interface ActiveContextDeps {
   validator?: MessageValidator;
 }
 
+const TOOL_RESULT_TRUNCATE = 200;
+const SEARCH_PATTERN_MAX = 200;
+const SEARCH_LIMIT_DEFAULT = 20;
+const SEARCH_LIMIT_MAX = 50;
+
+function truncate(s: string, max: number): string {
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length <= max ? oneLine : oneLine.slice(0, max) + '…';
+}
+
+function formatTimestamp(ts: number): string {
+  return new Date(ts).toISOString().replace('T', ' ').slice(0, 19);
+}
+
+function formatMessageForTool(m: ContextMessage): string {
+  const meta = [m.id.slice(0, 8), m.role, formatTimestamp(m.timestamp)];
+  if (m.toolCallId) meta.push(`tool_call_id=${m.toolCallId}`);
+  return `[${meta.join('|')}] ${m.content}`;
+}
+
+// ---------- Class ----------
+
 export class ActiveContext {
   private readonly context: LLMContext;
   private readonly taskManager: TaskManager;
   private readonly tokenizer: TokenizerFn;
   private readonly validator: MessageValidator;
   private readonly config: Required<Pick<ActiveContextConfig, 'modelName' | 'baseUrl'>> &
-    ActiveContextConfig & { think: boolean; tools: ToolDefinition[] };
+    ActiveContextConfig & { tools: ToolDefinition[] };
+  private think: boolean;
 
   private ollama: OllamaClientLike | null;
   private readonly contextPersistPath?: string;
@@ -123,9 +216,9 @@ export class ActiveContext {
     this.config = {
       ...config,
       baseUrl,
-      think: config.think ?? true,
-      tools: config.tools ?? TASK_TOOLS,
+      tools: config.tools ?? DEFAULT_TOOLS,
     };
+    this.think = config.think ?? true;
     this.tokenizer = deps.tokenizer ?? defaultTokenizer;
     this.validator = deps.validator ?? new MessageValidator();
     this.context = new LLMContext({
@@ -142,6 +235,14 @@ export class ActiveContext {
   public init(systemPrompt: string): void {
     this.context.setSystemPrompt(systemPrompt);
     this.scheduleContextSave();
+  }
+
+  public setThink(value: boolean): void {
+    this.think = value;
+  }
+
+  public isThinking(): boolean {
+    return this.think;
   }
 
   public get tasks(): TaskManager {
@@ -194,7 +295,6 @@ export class ActiveContext {
       const response = await this.callOllama(messages, options);
 
       const hasToolCalls = response.toolCalls.length > 0;
-
       if (response.thinking) allThinking.push(response.thinking);
 
       if (response.content || response.thinking || hasToolCalls) {
@@ -249,7 +349,7 @@ export class ActiveContext {
     const taskState = this.taskManager.getTaskContextForLLM();
     pipeline.push({
       role: 'system',
-      content: `${TASK_API_INSTRUCTION}\n\nCURRENT TASKS STATE:\n${taskState}`,
+      content: `${SYSTEM_INSTRUCTION}\n\nCURRENT TASKS STATE:\n${taskState}`,
     });
 
     pipeline.push(...this.context.toPipelineMessages());
@@ -259,7 +359,7 @@ export class ActiveContext {
 
   private refreshReservedTokens(): void {
     const taskState = this.taskManager.getTaskContextForLLM();
-    const combined = `${TASK_API_INSTRUCTION}\n\nCURRENT TASKS STATE:\n${taskState}`;
+    const combined = `${SYSTEM_INSTRUCTION}\n\nCURRENT TASKS STATE:\n${taskState}`;
     const toolsTokens = this.tokenizer(JSON.stringify(this.config.tools));
     this.context.setReservedTokens(this.tokenizer(combined) + toolsTokens);
   }
@@ -291,7 +391,7 @@ export class ActiveContext {
       messages,
       options: this.config.options,
       tools: this.config.tools,
-      think: this.config.think,
+      think: this.think,
     };
 
     if (!shouldStream) {
@@ -312,14 +412,10 @@ export class ActiveContext {
         content += chunk.content;
         if (realtime) options.onContent?.(chunk.content);
       }
-      if (chunk.toolCalls.length > 0) {
-        toolCalls.push(...chunk.toolCalls);
-      }
+      if (chunk.toolCalls.length > 0) toolCalls.push(...chunk.toolCalls);
     }
 
-    if (options.onContent && content && !realtime) {
-      options.onContent(content);
-    }
+    if (options.onContent && content && !realtime) options.onContent(content);
 
     return { content, thinking, toolCalls };
   }
@@ -338,15 +434,61 @@ export class ActiveContext {
 
   private dispatchTool(call: NativeToolCall): string {
     const args = call.arguments;
+
     switch (call.name) {
+      // ---------- Context tools ----------
+
+      case 'getMessageById': {
+        const id = typeof args.id === 'string' ? args.id : '';
+        if (!id) throw new Error('getMessageById: "id" parameter is required');
+        const msg = this.context.resolveMessageId(id);
+        if (!msg) throw new Error(`Message "${id}" not found`);
+        return formatMessageForTool(msg);
+      }
+
+      case 'searchMessages': {
+        const pattern = typeof args.pattern === 'string' ? args.pattern : '';
+        if (!pattern) throw new Error('searchMessages: "pattern" parameter is required');
+        if (pattern.length > SEARCH_PATTERN_MAX) {
+          throw new Error(
+            `searchMessages: pattern too long (${pattern.length} chars, max ${SEARCH_PATTERN_MAX})`,
+          );
+        }
+        const role =
+          typeof args.role === 'string' &&
+          ['user', 'assistant', 'tool'].includes(args.role)
+            ? (args.role as MessageRole)
+            : undefined;
+        const requested =
+          typeof args.limit === 'number' && Number.isFinite(args.limit)
+            ? Math.floor(args.limit)
+            : SEARCH_LIMIT_DEFAULT;
+        const limit = Math.min(Math.max(1, requested), SEARCH_LIMIT_MAX);
+
+        const matches = this.context.findMessages({ pattern, role, limit });
+        if (matches.length === 0) return 'No messages matched.';
+
+        const lines = matches.map(
+          (m) =>
+            `- [${m.id.slice(0, 8)}|${m.role}|${formatTimestamp(m.timestamp)}] ` +
+            truncate(m.content, TOOL_RESULT_TRUNCATE),
+        );
+        return `Found ${matches.length} message(s):\n${lines.join('\n')}`;
+      }
+
+      // ---------- Task tools ----------
+
       case 'createTask': {
         const title = typeof args.title === 'string' ? args.title : '';
         const description =
           typeof args.description === 'string' ? args.description : undefined;
+        const parentId = typeof args.parentId === 'string' ? args.parentId : undefined;
         if (!title) throw new Error('createTask: "title" parameter is required');
-        const task = this.taskManager.createTask(title, description);
-        return `Task created with ID ${task.id}`;
+        const task = this.taskManager.createTask(title, description, parentId);
+        const parentInfo = task.parentId ? ` under parent ${task.parentId}` : '';
+        return `Task created with ID ${task.id}${parentInfo}`;
       }
+
       case 'updateTaskStatus': {
         const id = typeof args.id === 'string' ? args.id : '';
         const status = typeof args.status === 'string' ? args.status : '';
@@ -356,6 +498,7 @@ export class ActiveContext {
         const updated = this.taskManager.updateTaskStatus(id, status as any, result);
         return `Task ${updated.id} updated to status "${updated.status}"`;
       }
+
       case 'deleteTask': {
         const id = typeof args.id === 'string' ? args.id : '';
         if (!id) throw new Error('deleteTask: "id" parameter is required');
@@ -363,15 +506,22 @@ export class ActiveContext {
         if (!deleted) throw new Error(`Task ${id} not found`);
         return `Task ${id} deleted`;
       }
+
       case 'listTasks': {
         const all = this.taskManager.getAllTasks();
-        return all.length === 0
-          ? 'No tasks available.'
-          : all.map((t) => `[${t.id}] ${t.title} — ${t.status}`).join('\n');
+        if (all.length === 0) return 'No tasks available.';
+        const lines = all.map((t) => this.formatTaskLine(t));
+        return `Tasks (${all.length}):\n${lines.join('\n')}`;
       }
+
       default:
         throw new Error(`Unknown function: ${call.name}`);
     }
+  }
+
+  private formatTaskLine(t: Task): string {
+    const parent = t.parentId ? ` parent=${t.parentId}` : '';
+    return `- [${t.id}${parent}] ${t.title} — ${t.status}`;
   }
 
   private formatToolResultMessage(r: ToolExecutionResult): string {

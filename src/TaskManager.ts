@@ -25,9 +25,12 @@ export class TaskManager {
     }
   }
 
-  public createTask(title: string, description?: string): Task {
+  public createTask(title: string, description?: string, parentId?: string): Task {
     if (!title || title.trim().length === 0) {
       throw new Error('Task title is required');
+    }
+    if (parentId !== undefined && !this.tasks.has(parentId)) {
+      throw new Error(`Parent task ${parentId} not found`);
     }
     const id = randomUUID().substring(0, 8);
     const now = Date.now();
@@ -36,6 +39,7 @@ export class TaskManager {
       title: title.trim(),
       description: description?.trim(),
       status: 'todo',
+      parentId,
       createdAt: now,
       updatedAt: now,
     };
@@ -46,6 +50,10 @@ export class TaskManager {
 
   public getTaskById(id: string): Task | undefined {
     return this.tasks.get(id);
+  }
+
+  public getChildren(parentId: string): Task[] {
+    return this.getAllTasks().filter((t) => t.parentId === parentId);
   }
 
   public updateTaskStatus(id: string, status: TaskStatus, result?: string): Task {
@@ -84,10 +92,6 @@ export class TaskManager {
     this.flush();
   }
 
-  /**
-   * Принудительно сбрасывает отложенное сохранение на диск синхронно.
-   * Используется в тестах и перед завершением процесса.
-   */
   public flush(): void {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
@@ -96,10 +100,6 @@ export class TaskManager {
     this.save();
   }
 
-  /**
-   * Сериализация задач для системного контекста.
-   * Все пользовательские поля проходят санитизацию (защита от prompt injection).
-   */
   public getTaskContextForLLM(): string {
     if (this.tasks.size === 0) return 'No tasks available.';
     return this.getAllTasks()
@@ -111,7 +111,8 @@ export class TaskManager {
         const safeResult = t.result
           ? ` Result: "${this.validator.sanitizeForSystemContext(t.result)}"`
           : '';
-        return `- [ID: ${t.id}][Status: ${t.status}] Title: "${safeTitle}"${safeDesc}${safeResult}`;
+        const parent = t.parentId ? ` parent=${t.parentId}` : '';
+        return `- [ID: ${t.id}${parent}][Status: ${t.status}] Title: "${safeTitle}"${safeDesc}${safeResult}`;
       })
       .join('\n');
   }
@@ -127,7 +128,7 @@ export class TaskManager {
         }
       }
     } catch {
-      // повреждённый файл игнорируем
+      /* corrupted file ignored */
     }
   }
 

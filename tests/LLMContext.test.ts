@@ -133,3 +133,52 @@ test('import recalculates tokensCount if missing or zero', () => {
   });
   assert.equal(ctx.stats.historyTokens, 5 + 99);
 });
+
+test('findMessages по regex pattern (case-insensitive)', () => {
+  const ctx = new LLMContext();
+  ctx.appendMessage('user', 'Hello World');
+  ctx.appendMessage('assistant', 'hi there');
+  ctx.appendMessage('user', 'goodbye world');
+
+  assert.equal(ctx.findMessages({ pattern: 'world' }).length, 2);
+  assert.equal(ctx.findMessages({ pattern: '^hello' }).length, 1);
+  assert.equal(ctx.findMessages({ pattern: 'bye\\s+world$' }).length, 1);
+  assert.equal(ctx.findMessages({ pattern: 'nope' }).length, 0);
+});
+
+test('findMessages по regex + role filter', () => {
+  const ctx = new LLMContext();
+  ctx.appendMessage('user', 'hello');
+  ctx.appendMessage('assistant', 'hello hello');
+  assert.equal(ctx.findMessages({ pattern: 'hello', role: 'user' }).length, 1);
+  assert.equal(ctx.findMessages({ pattern: 'hello', role: 'assistant' }).length, 1);
+});
+
+test('findMessages rejects invalid regex', () => {
+  const ctx = new LLMContext();
+  ctx.appendMessage('user', 'x');
+  assert.throws(() => ctx.findMessages({ pattern: '[unclosed' }), /Invalid regex/);
+});
+
+test('findMessages rejects too-long pattern', () => {
+  const ctx = new LLMContext();
+  ctx.appendMessage('user', 'x');
+  const long = 'a'.repeat(201);
+  assert.throws(() => ctx.findMessages({ pattern: long }), /too long/);
+});
+
+test('findMessages limits results to last N', () => {
+  const ctx = new LLMContext();
+  for (let i = 0; i < 10; i++) ctx.appendMessage('user', `msg ${i}`);
+  const r = ctx.findMessages({ pattern: 'msg', limit: 3 });
+  assert.equal(r.length, 3);
+  assert.match(r[2].content, /msg 9/);
+});
+
+test('resolveMessageId finds by unique prefix', () => {
+  const ctx = new LLMContext();
+  const id = ctx.appendMessage('user', 'hello');
+  const prefix = id.slice(0, 8);
+  assert.equal(ctx.resolveMessageId(prefix)?.id, id);
+  assert.equal(ctx.resolveMessageId('nonexistent'), undefined);
+});

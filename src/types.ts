@@ -62,6 +62,7 @@ export interface Task {
   description?: string;
   status: TaskStatus;
   result?: string;
+  parentId?: string;
   readonly createdAt: number;
   updatedAt: number;
 }
@@ -127,7 +128,17 @@ export interface AskResult {
   stats: ContextStorageStats;
 }
 
-// Legacy (only used by LFM3Parser / StreamRouter)
+export interface SearchMessagesOptions {
+  /** Литеральный поиск (case-insensitive substring). Оставлен для обратной совместимости. */
+  query?: string;
+  /** Regex-поиск (case-insensitive). Максимум 200 символов. */
+  pattern?: string;
+  role?: MessageRole;
+  /** Максимум результатов. По умолчанию — без ограничения. При tool-call capped до 50. */
+  limit?: number;
+}
+
+// Legacy: for LFM3Parser / StreamRouter, kept for backward compatibility
 export interface ParsedToolCall {
   functionName: string;
   args: Record<string, string>;
