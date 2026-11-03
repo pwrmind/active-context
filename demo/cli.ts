@@ -454,6 +454,7 @@ function parseArgs(argv: string[]): CliOptions | null {
       }
       case '--persist': opts.persistPath = argv[++i]; break;
       case '--system': opts.systemPrompt = argv[++i]; break;
+      case '--think': opts.think = true; break;
       case '--no-think': opts.think = false; break;
       case '--verbose-thinking': opts.verboseThinking = true; break;
       case '-h':

@@ -142,20 +142,43 @@ const TASK_TOOLS: ToolDefinition[] = [
 const DEFAULT_TOOLS: ToolDefinition[] = [...CORE_TOOLS, ...TASK_TOOLS];
 
 const SYSTEM_INSTRUCTION = `[ACTIVE CONTEXT — TOOLS ACTIVE]
-You have access to native tools for tasks and conversation history.
+You have native tools for tasks and conversation history.
 
 Task tools:     createTask, updateTaskStatus, deleteTask, listTasks
 Context tools:  searchMessages, getMessageById
 
-Rules:
+## Core rules
+
 - Never invent task IDs. Only use IDs from CURRENT TASKS STATE below.
-- When the user asks to "decompose", "plan", or "break down" a task into steps,
-  create ONE TASK PER STEP via createTask, and set parentId to the parent task ID.
-  Do not output steps only as prose.
-- When the user asks "what would be the structure" or "what blocks", answer in text
-  unless they explicitly ask to create tasks.
-- Use searchMessages to look up prior conversation content by regex when needed.
-- After receiving tool results, provide a concise final answer to the user.`;
+- Never add details, technologies, or requirements to a task description
+  that the user did not explicitly state. If clarification is needed, ask first.
+- CURRENT TASKS STATE in the system block is always up-to-date.
+  Answer "what tasks do I have" from it directly, without calling listTasks,
+  and without claiming you called listTasks unless you actually did.
+- After receiving tool results, provide a concise final answer to the user.
+
+## Decomposition
+
+When the user asks to "decompose", "plan", or "break down" a task:
+
+1. Create the parent task first:
+   createTask({ title: "<user's task>" }) → returns parentId
+2. Create AT LEAST 3 child tasks, one per phase:
+   createTask({ title: "<phase>", parentId: "<parentId>" })
+3. Do NOT ask permission — decompose fully in one turn.
+4. Do NOT invent technologies or requirements. Use only what the user said,
+   or use generic phase names ("Define scope", "Implement", "Test", "Deploy").
+
+Example:
+User: "Создай todo-app. Декомпозируй на задачи и подзадачи."
+You call:
+- createTask({ title: "Todo-app" }) → parent 2b2ecabc
+- createTask({ title: "Define scope and requirements", parentId: "2b2ecabc" })
+- createTask({ title: "Design data model", parentId: "2b2ecabc" })
+- createTask({ title: "Implement backend API", parentId: "2b2ecabc" })
+- createTask({ title: "Build UI", parentId: "2b2ecabc" })
+- createTask({ title: "Write tests", parentId: "2b2ecabc" })
+Then reply with a short summary listing all created IDs.`;
 
 // ---------- Config ----------
 
