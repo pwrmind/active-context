@@ -87,3 +87,62 @@ test('parentId appears in LLM context', () => {
   const ctx = tm.getTaskContextForLLM();
   assert.match(ctx, new RegExp(`parent=${parent.id}`));
 });
+
+test('updateTask renames without changing id or createdAt', () => {
+  const tm = new TaskManager();
+  const t = tm.createTask('Old', 'old-desc');
+  const updated = tm.updateTask(t.id, { title: 'New', description: 'new-desc' });
+  assert.equal(updated.id, t.id);
+  assert.equal(updated.createdAt, t.createdAt);
+  assert.equal(updated.title, 'New');
+  assert.equal(updated.description, 'new-desc');
+  assert.equal(tm.getAllTasks().length, 1);
+});
+
+test('updateTask reparents a task', () => {
+  const tm = new TaskManager();
+  const p = tm.createTask('Parent');
+  const c = tm.createTask('Child');
+  tm.updateTask(c.id, { parentId: p.id });
+  assert.equal(tm.getTaskById(c.id)?.parentId, p.id);
+  assert.equal(tm.getChildren(p.id).length, 1);
+});
+
+test('updateTask detaches with parentId=null', () => {
+  const tm = new TaskManager();
+  const p = tm.createTask('Parent');
+  const c = tm.createTask('Child', undefined, p.id);
+  tm.updateTask(c.id, { parentId: null });
+  assert.equal(tm.getTaskById(c.id)?.parentId, undefined);
+});
+
+test('updateTask rejects self as parent', () => {
+  const tm = new TaskManager();
+  const t = tm.createTask('X');
+  assert.throws(() => tm.updateTask(t.id, { parentId: t.id }), /own parent/);
+});
+
+test('updateTask rejects cycle', () => {
+  const tm = new TaskManager();
+  const a = tm.createTask('A');
+  const b = tm.createTask('B', undefined, a.id);
+  const c = tm.createTask('C', undefined, b.id);
+  assert.throws(() => tm.updateTask(a.id, { parentId: c.id }), /cycle/);
+});
+
+test('updateTask rejects empty title', () => {
+  const tm = new TaskManager();
+  const t = tm.createTask('X');
+  assert.throws(() => tm.updateTask(t.id, { title: '   ' }), /non-empty/);
+});
+
+test('updateTask preserves status and result when not patched', () => {
+  const tm = new TaskManager();
+  const t = tm.createTask('X');
+  tm.updateTaskStatus(t.id, 'in_progress', 'working');
+  tm.updateTask(t.id, { title: 'Y' });
+  const after = tm.getTaskById(t.id)!;
+  assert.equal(after.status, 'in_progress');
+  assert.equal(after.result, 'working');
+  assert.equal(after.title, 'Y');
+});

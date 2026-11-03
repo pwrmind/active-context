@@ -394,3 +394,64 @@ test('setThink toggles isThinking and passes to Ollama', async () => {
   await agent.ask('b');
   assert.equal(lastThink, false);
 });
+
+test('updateTask tool renames without delete+create', async () => {
+  const client = new ScriptedClient([
+    { toolCalls: [{ id: 'c1', name: 'createTask', arguments: { title: 'Old' } }] },
+    { content: 'ok', thinking: '' },
+  ]);
+  const agent = new ActiveContext({ modelName: 'test' }, { ollamaClient: client });
+  await agent.ask('create');
+  const original = agent.tasks.getAllTasks()[0];
+
+  const client2 = new ScriptedClient([
+    {
+      toolCalls: [
+        { id: 'c2', name: 'updateTask', arguments: { id: original.id, title: 'New' } },
+      ],
+    },
+    { content: 'ok', thinking: '' },
+  ]);
+  const agent2 = new ActiveContext(
+    { modelName: 'test' },
+    { ollamaClient: client2, taskManager: agent.tasks },
+  );
+  const r = await agent2.ask('rename');
+
+  assert.equal(r.toolCalls[0].success, true);
+  assert.equal(agent.tasks.getAllTasks().length, 1);
+  const after = agent.tasks.getAllTasks()[0];
+  assert.equal(after.id, original.id);
+  assert.equal(after.title, 'New');
+  assert.equal(after.createdAt, original.createdAt);
+});
+
+test('updateTask tool reparents a task', async () => {
+  const client = new ScriptedClient([
+    { toolCalls: [{ id: 'c1', name: 'createTask', arguments: { title: 'Parent' } }] },
+    { content: 'ok', thinking: '' },
+  ]);
+  const agent = new ActiveContext({ modelName: 'test' }, { ollamaClient: client });
+  await agent.ask('create parent');
+  const parent = agent.tasks.getAllTasks()[0];
+  agent.tasks.createTask('Child');
+
+  const client2 = new ScriptedClient([
+    {
+      toolCalls: [
+        {
+          id: 'c2',
+          name: 'updateTask',
+          arguments: { id: agent.tasks.getAllTasks()[1].id, parentId: parent.id },
+        },
+      ],
+    },
+    { content: 'ok', thinking: '' },
+  ]);
+  const agent2 = new ActiveContext(
+    { modelName: 'test' },
+    { ollamaClient: client2, taskManager: agent.tasks },
+  );
+  await agent2.ask('reparent');
+  assert.equal(agent.tasks.getChildren(parent.id).length, 1);
+});

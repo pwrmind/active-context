@@ -67,6 +67,15 @@ export interface Task {
   updatedAt: number;
 }
 
+export interface TaskUpdate {
+  title?: string;
+  description?: string;
+  status?: TaskStatus;
+  result?: string;
+  /** null означает «отцепить от родителя» */
+  parentId?: string | null;
+}
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;

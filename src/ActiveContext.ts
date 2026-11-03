@@ -5,6 +5,8 @@ import { LLMContext } from './LLMContext.js';
 import { TaskManager } from './TaskManager.js';
 import { defaultTokenizer } from './tokenizer.js';
 import { MessageValidator } from './validator.js';
+import type { TaskUpdate } from './TaskManager.js';
+
 import type {
   AskOptions,
   AskResult,
@@ -99,21 +101,35 @@ const TASK_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    type: 'function',
+  type: 'function',
     function: {
-      name: 'updateTaskStatus',
-      description: 'Update the status of an existing task, optionally recording a result.',
+      name: 'updateTask',
+      description:
+        'Update fields of an existing task without changing its ID: title, description, ' +
+        'status, result, or parentId. Use this to RENAME a task or change its description. ' +
+        'NEVER delete and recreate a task to modify it — that destroys its ID, status, and history.',
       parameters: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'Task ID from CURRENT TASKS STATE' },
+          id: { type: 'string', description: 'Task ID (unchanged after update)' },
+          title: { type: 'string', description: 'New title (optional)' },
+          description: {
+            type: 'string',
+            description: 'New description (optional). Pass empty string to clear.',
+          },
           status: {
             type: 'string',
             enum: ['todo', 'in_progress', 'completed', 'failed'],
+            description: 'New status (optional)',
           },
-          result: { type: 'string', description: 'Optional execution result report' },
+          result: { type: 'string', description: 'Result text (optional)' },
+          parentId: {
+            type: 'string',
+            description:
+              'New parent task ID (optional). Pass empty string to detach from current parent.',
+          },
         },
-        required: ['id', 'status'],
+        required: ['id'],
       },
     },
   },
@@ -178,7 +194,26 @@ You call:
 - createTask({ title: "Implement backend API", parentId: "2b2ecabc" })
 - createTask({ title: "Build UI", parentId: "2b2ecabc" })
 - createTask({ title: "Write tests", parentId: "2b2ecabc" })
-Then reply with a short summary listing all created IDs.`;
+Then reply with a short summary listing all created IDs.
+
+## Task editing
+
+- To rename a task or change its description: use updateTask(id, { title }) or
+  updateTask(id, { description }).
+- To reparent a task: use updateTask(id, { parentId }).
+- To change status: use updateTask(id, { status }) or updateTaskStatus.
+- NEVER delete and recreate a task to modify it. Deletion destroys its ID,
+  status, result, and createdAt, and breaks any external references.
+  If you find yourself calling deleteTask + createTask on the same conceptual
+  task, STOP — that is a bug; use updateTask instead.
+
+## Tool result presentation
+
+When presenting results from listTasks, searchMessages, or getMessageById:
+- Do NOT invent markdown tables with columns or values you did not see.
+- Either quote the tool output verbatim, or produce a plain bulleted list using
+  only the fields actually present in the tool result.
+- Do NOT fabricate timestamps, snippets, or IDs.`;
 
 // ---------- Config ----------
 
@@ -512,7 +547,26 @@ export class ActiveContext {
         return `Task created with ID ${task.id}${parentInfo}`;
       }
 
+      case 'updateTask': {
+        const id = typeof args.id === 'string' ? args.id : '';
+        if (!id) throw new Error('updateTask: "id" parameter is required');
+
+        const patch: TaskUpdate = {};
+        if (typeof args.title === 'string') patch.title = args.title;
+        if (typeof args.description === 'string') patch.description = args.description;
+        if (typeof args.status === 'string') patch.status = args.status as TaskStatus;
+        if (typeof args.result === 'string') patch.result = args.result;
+        if (typeof args.parentId === 'string') {
+          patch.parentId = args.parentId === '' ? null : args.parentId;
+        }
+
+        const updated = this.taskManager.updateTask(id, patch);
+        const parentInfo = updated.parentId ? `, parent=${updated.parentId}` : '';
+        return `Task ${updated.id} updated: title="${updated.title}", status=${updated.status}${parentInfo}`;
+      }
+
       case 'updateTaskStatus': {
+        // legacy — оставлено для обратной совместимости со старыми клиентами
         const id = typeof args.id === 'string' ? args.id : '';
         const status = typeof args.status === 'string' ? args.status : '';
         const result = typeof args.result === 'string' ? args.result : undefined;

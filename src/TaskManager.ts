@@ -57,15 +57,66 @@ export class TaskManager {
   }
 
   public updateTaskStatus(id: string, status: TaskStatus, result?: string): Task {
-    if (!VALID_STATUSES.includes(status)) {
-      throw new Error(
-        `Invalid status "${status}". Expected one of: ${VALID_STATUSES.join(', ')}`,
-      );
-    }
+    return this.updateTask(id, { status, result });
+  }
+
+  /**
+   * Универсальное обновление задачи. Не меняет id, createdAt.
+   * Проверяет: непустой title, валидный status, отсутствие циклов в parentId.
+   */
+  public updateTask(id: string, patch: TaskUpdate): Task {
     const task = this.tasks.get(id);
     if (!task) throw new Error(`Task ${id} not found`);
-    task.status = status;
-    if (result !== undefined) task.result = result;
+
+    if (patch.title !== undefined) {
+      const trimmed = patch.title.trim();
+      if (!trimmed) throw new Error('Title must be non-empty');
+      task.title = trimmed;
+    }
+
+    if (patch.description !== undefined) {
+      const trimmed = patch.description.trim();
+      task.description = trimmed || undefined;
+    }
+
+    if (patch.status !== undefined) {
+      if (!VALID_STATUSES.includes(patch.status)) {
+        throw new Error(
+          `Invalid status "${patch.status}". Expected one of: ${VALID_STATUSES.join(', ')}`,
+        );
+      }
+      task.status = patch.status;
+    }
+
+    if (patch.result !== undefined) {
+      task.result = patch.result;
+    }
+
+    if (patch.parentId !== undefined) {
+      if (patch.parentId === null) {
+        task.parentId = undefined;
+      } else {
+        if (patch.parentId === id) {
+          throw new Error('Task cannot be its own parent');
+        }
+        if (!this.tasks.has(patch.parentId)) {
+          throw new Error(`Parent task ${patch.parentId} not found`);
+        }
+        // защита от цикла: новый родитель не может быть потомком этой задачи
+        let cursor: string | undefined = patch.parentId;
+        const seen = new Set<string>();
+        while (cursor) {
+          if (cursor === id) {
+            throw new Error('Cannot set descendant as parent (cycle)');
+          }
+          if (seen.has(cursor)) break;
+          seen.add(cursor);
+          cursor = this.tasks.get(cursor)?.parentId;
+        }
+        task.parentId = patch.parentId;
+      }
+    }
+
     task.updatedAt = Date.now();
     this.scheduleSave();
     return task;
