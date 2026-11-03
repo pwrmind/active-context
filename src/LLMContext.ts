@@ -147,7 +147,11 @@ export class LLMContext {
       try {
         re = new RegExp(options.pattern, 'i');
       } catch (e) {
-        throw new Error(`Invalid regex pattern: ${(e as Error).message}`);
+      throw new Error(
+          `Invalid regex pattern: ${(e as Error).message}. ` +
+          `Hint: escape special characters \\[ \\] \\( \\) or use a simpler pattern. ` +
+          `Do not retry with wildcards — ask the user to fix the pattern.`,
+        );
       }
       result = result.filter((m) => re.test(m.content));
     } else if (options.query) {
