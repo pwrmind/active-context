@@ -455,3 +455,42 @@ test('updateTask tool reparents a task', async () => {
   await agent2.ask('reparent');
   assert.equal(agent.tasks.getChildren(parent.id).length, 1);
 });
+
+test('"make X the parent of Y" sets Y.parentId = X.id, not the reverse', async () => {
+  const client = new ScriptedClient([
+    { toolCalls: [{ id: 'c1', name: 'createTask', arguments: { title: 'Y' } }] },
+    { content: '', thinking: '', toolCalls: [] },
+  ]);
+  const agent = new ActiveContext({ modelName: 'test' }, { ollamaClient: client });
+  await agent.ask('create Y');
+  const y = agent.tasks.getAllTasks()[0];
+
+  // Симулируем правильное поведение модели после фикса промпта
+  const client2 = new ScriptedClient([
+    { toolCalls: [{ id: 'c2', name: 'createTask', arguments: { title: 'X' } }] },
+    { content: '', thinking: '', toolCalls: [] },
+  ]);
+  const agent2 = new ActiveContext(
+    { modelName: 'test' },
+    { ollamaClient: client2, taskManager: agent.tasks },
+  );
+  await agent2.ask('create X');
+  const x = agent.tasks.getAllTasks().find((t) => t.title === 'X')!;
+
+  const client3 = new ScriptedClient([
+    {
+      toolCalls: [
+        { id: 'c3', name: 'updateTask', arguments: { id: y.id, parentId: x.id } },
+      ],
+    },
+    { content: 'ok', thinking: '' },
+  ]);
+  const agent3 = new ActiveContext(
+    { modelName: 'test' },
+    { ollamaClient: client3, taskManager: agent.tasks },
+  );
+  await agent3.ask('make X parent of Y');
+
+  assert.equal(agent.tasks.getTaskById(y.id)?.parentId, x.id);
+  assert.equal(agent.tasks.getTaskById(x.id)?.parentId, undefined);
+});
