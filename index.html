@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Интерактивный Аудит Архитектуры</title>
+    
+    <!-- Стили Reveal.js (полные ссылки) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/reveal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/theme/dracula.css" id="theme">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/plugin/highlight/monokai.css">
+
+    <!-- Глобальное реактивное хранилище Alpine.js -->
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.store('audit', {
+                answers: {
+                    strategy: null,
+                    environment: null
+                },
+                setAnswer(key, value) {
+                    this.answers[key] = value;
+                },
+                isComplete() {
+                    return this.answers.strategy !== null && this.answers.environment !== null;
+                }
+            });
+        });
+    </script>
+    <!-- Alpine.js (defer обязателен) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <style>
+        :root {
+            --dracula-pink: #ff79c6;
+            --dracula-green: #50fa7b;
+            --dracula-cyan: #8be9fd;
+            --dracula-comment: #6272a4;
+        }
+        .reveal .slides section {
+            text-align: left;
+        }
+        .reveal .slides section.center {
+            text-align: center;
+        }
+        .options-container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-top: 25px;
+        }
+        .audit-btn {
+            font-family: inherit;
+            font-size: 0.8em;
+            padding: 18px 25px;
+            background: #44475a;
+            color: #f8f8f2;
+            border: 2px solid transparent;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: left;
+        }
+        .audit-btn:hover {
+            background: #4d5166;
+            border-color: var(--dracula-comment);
+        }
+        .audit-btn.active {
+            background: var(--dracula-pink);
+            color: #ffffff;
+            border-color: #f1fa8c;
+            box-shadow: 0 0 15px rgba(255, 121, 198, 0.4);
+        }
+        .result-box {
+            padding: 25px;
+            background: #282a36;
+            border-left: 5px solid var(--dracula-green);
+            border-radius: 4px;
+            margin-top: 20px;
+        }
+        .hint {
+            font-size: 0.5em;
+            color: var(--dracula-comment);
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <!-- ... (весь ваш HTML-код слайдов остаётся без изменений) ... -->
+</body>
+
+<!-- Подключение Reveal.js (в самом конце body, перед инициализацией) -->
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/plugin/highlight/highlight.js"></script>
+<script>
+    // Небольшая задержка, чтобы DOM и Alpine успели инициализироваться
+    document.addEventListener('DOMContentLoaded', () => {
+        Reveal.initialize({
+            controls: true,
+            progress: true,
+            hash: true,
+            center: false,
+            transition: 'slide',
+            plugins: [ RevealHighlight ]
+        });
+    });
+</script>
+</html>
