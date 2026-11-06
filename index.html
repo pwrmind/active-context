@@ -4,31 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Интерактивный Аудит Архитектуры</title>
-    
-    <!-- Стили Reveal.js (полные ссылки) -->
+
+    <!-- Стили Reveal.js -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/reveal.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/theme/dracula.css" id="theme">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/plugin/highlight/monokai.css">
 
-    <!-- Глобальное реактивное хранилище Alpine.js -->
+    <!-- Реактивное хранилище Alpine.js (должно быть ДО загрузки Alpine) -->
     <script>
         document.addEventListener('alpine:init', () => {
             Alpine.store('audit', {
-                answers: {
-                    strategy: null,
-                    environment: null
-                },
-                setAnswer(key, value) {
-                    this.answers[key] = value;
-                },
+                answers: { strategy: null, environment: null },
+                setAnswer(key, value) { this.answers[key] = value; },
                 isComplete() {
                     return this.answers.strategy !== null && this.answers.environment !== null;
                 }
             });
         });
     </script>
-    <!-- Alpine.js (defer обязателен) -->
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
 
     <style>
         :root {
@@ -37,12 +31,8 @@
             --dracula-cyan: #8be9fd;
             --dracula-comment: #6272a4;
         }
-        .reveal .slides section {
-            text-align: left;
-        }
-        .reveal .slides section.center {
-            text-align: center;
-        }
+        .reveal .slides section { text-align: left; }
+        .reveal .slides section.center { text-align: center; }
         .options-container {
             display: flex;
             flex-direction: column;
@@ -86,15 +76,108 @@
     </style>
 </head>
 <body>
-    <!-- ... (весь ваш HTML-код слайдов остаётся без изменений) ... -->
-</body>
 
-<!-- Подключение Reveal.js (в самом конце body, перед инициализацией) -->
-<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/reveal.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/plugin/highlight/highlight.js"></script>
-<script>
-    // Небольшая задержка, чтобы DOM и Alpine успели инициализироваться
-    document.addEventListener('DOMContentLoaded', () => {
+    <div class="reveal">
+        <div class="slides">
+
+            <!-- СЛАЙД 1 -->
+            <section class="center">
+                <h1 style="color: var(--dracula-pink);">Интерактивный Аудит</h1>
+                <p>Проектирование целевой архитектуры приложения на лету</p>
+                <p class="hint">Используйте стрелки на клавиатуре или нажимайте <span style="color: var(--dracula-cyan);">Вправо →</span> для навигации</p>
+            </section>
+
+            <!-- СЛАЙД 2 -->
+            <section>
+                <h2>Шаг 1: Фокус оптимизации</h2>
+                <p>Какое техническое свойство системы является для вас определяющим?</p>
+
+                <div x-data class="options-container">
+                    <button class="audit-btn"
+                            :class="$store.audit.answers.strategy === 'speed' ? 'active' : ''"
+                            @click="$store.audit.setAnswer('strategy', 'speed')">
+                        ⚡ <strong>Максимальное быстродействие</strong> — выжимаем предел из вычислений, важен моментальный отклик интерфейса.
+                    </button>
+                    <button class="audit-btn"
+                            :class="$store.audit.answers.strategy === 'maintain' ? 'active' : ''"
+                            @click="$store.audit.setAnswer('strategy', 'maintain')">
+                        🛠 <strong>Удобство поддержки</strong> — чистота кодовой базы, модульность и легкость внесения изменений.
+                    </button>
+                </div>
+            </section>
+
+            <!-- СЛАЙД 3 -->
+            <section>
+                <h2>Шаг 2: Условия исполнения</h2>
+                <p>Каковы ключевые ограничения среды выполнения?</p>
+
+                <div x-data class="options-container">
+                    <button class="audit-btn"
+                            :class="$store.audit.answers.environment === 'local' ? 'active' : ''"
+                            @click="$store.audit.setAnswer('environment', 'local')">
+                        💻 <strong>Локальное окружение</strong> — запуск непосредственно на устройстве пользователя при ограниченных ресурсах.
+                    </button>
+                    <button class="audit-btn"
+                            :class="$store.audit.answers.environment === 'cloud' ? 'active' : ''"
+                            @click="$store.audit.setAnswer('environment', 'cloud')">
+                        ☁ <strong>Серверная инфраструктура</strong> — распределенная среда, выделенные сервера или облачный хостинг.
+                    </button>
+                </div>
+            </section>
+
+            <!-- СЛАЙД 4 -->
+            <section>
+                <h2>Результаты экспресс-анализа</h2>
+
+                <div x-data>
+                    <div x-show="!$store.audit.isComplete()" style="color: #ffb86c;" x-transition>
+                        <p>⚠️ <strong>Внимание:</strong> Для построения архитектурной модели не хватает данных.</p>
+                        <p>Пожалуйста, вернитесь на предыдущие слайды и выберите параметры.</p>
+                    </div>
+
+                    <div x-show="$store.audit.isComplete()" x-transition>
+                        <p>На основе зафиксированных метрик сформирован следующий технологический стек:</p>
+
+                        <div class="result-box">
+                            <template x-if="$store.audit.answers.strategy === 'speed' && $store.audit.answers.environment === 'local'">
+                                <div>
+                                    <h3 style="color: var(--dracula-green); margin-top: 0;">Низкоуровневая Edge-оптимизация</h3>
+                                    <p>Вам необходимо минимизировать runtime-накладные расходы. Рекомендуется использовать компилируемые в <strong>WebAssembly</strong> модули, легковесные движки на C/C++ или шейдерные вычисления в браузере (WebGL/WebNN).</p>
+                                </div>
+                            </template>
+
+                            <template x-if="$store.audit.answers.strategy === 'speed' && $store.audit.answers.environment === 'cloud'">
+                                <div>
+                                    <h3 style="color: var(--dracula-green); margin-top: 0;">Высоконагруженный (Highload) бэкенд</h3>
+                                    <p>Оптимальным решением станет асинхронный неблокирующий ввод-вывод, построение очередей и резидентные базы данных (In-Memory DB). В браузере применяется агрессивное кэширование и потоковая передача чанков данных.</p>
+                                </div>
+                            </template>
+
+                            <template x-if="$store.audit.answers.strategy === 'maintain' && $store.audit.answers.environment === 'local'">
+                                <div>
+                                    <h3 style="color: var(--dracula-cyan); margin-top: 0;">Модульный автономный монолит</h3>
+                                    <p>Наилучший выбор — чистая архитектура в рамках одного контекста. Весь исходный код должен находиться перед глазами (Single-File Component подход). Для интерфейса идеально подходит реактивное декларативное связывание через <strong>Alpine.js</strong>.</p>
+                                </div>
+                            </template>
+
+                            <template x-if="$store.audit.answers.strategy === 'maintain' && $store.audit.answers.environment === 'cloud'">
+                                <div>
+                                    <h3 style="color: var(--dracula-cyan); margin-top: 0;">Чистая многослойная архитектура</h3>
+                                    <p>Рекомендуется жесткое разделение обязанностей (Separation of Concerns). Эндпоинты изолируются, обмен данными происходит через строго типизированные контракты (DTO), а бизнес-логика полностью отделена от деталей реализации бэкенда.</p>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+    </div>
+
+    <!-- Reveal.js и инициализация — в конце body, но ВНУТРИ него -->
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/reveal.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/plugin/highlight/highlight.js"></script>
+    <script>
         Reveal.initialize({
             controls: true,
             progress: true,
@@ -103,6 +186,6 @@
             transition: 'slide',
             plugins: [ RevealHighlight ]
         });
-    });
-</script>
+    </script>
+</body>
 </html>
