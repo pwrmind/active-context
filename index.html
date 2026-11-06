@@ -3,189 +3,1131 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Интерактивный Аудит Архитектуры</title>
+    <title>Выгорание в QA — KFC Edition</title>
 
-    <!-- Стили Reveal.js -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/reveal.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/theme/dracula.css" id="theme">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/theme/black.css" id="theme">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/plugin/highlight/monokai.css">
 
-    <!-- Реактивное хранилище Alpine.js (должно быть ДО загрузки Alpine) -->
-    <script>
-        document.addEventListener('alpine:init', () => {
-            Alpine.store('audit', {
-                answers: { strategy: null, environment: null },
-                setAnswer(key, value) { this.answers[key] = value; },
-                isComplete() {
-                    return this.answers.strategy !== null && this.answers.environment !== null;
-                }
-            });
-        });
-    </script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.10/dist/cdn.min.js"></script>
 
     <style>
+        /* ============================================================
+           KFC THEME + LAYOUT
+           ============================================================ */
         :root {
-            --dracula-pink: #ff79c6;
-            --dracula-green: #50fa7b;
-            --dracula-cyan: #8be9fd;
-            --dracula-comment: #6272a4;
+            --kfc-red: #E40018;
+            --kfc-red-dark: #B80014;
+            --kfc-black: #1A1A1A;
+            --kfc-white: #FFFFFF;
+            --kfc-cream: #FDF6E3;
+            --kfc-gray: #666666;
+            --kfc-stripe: repeating-linear-gradient(
+                90deg,
+                var(--kfc-red) 0 20px,
+                var(--kfc-white) 20px 40px
+            );
         }
-        .reveal .slides section { text-align: left; }
-        .reveal .slides section.center { text-align: center; }
-        .options-container {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            margin-top: 25px;
+
+        .reveal-viewport {
+            background: radial-gradient(circle at 15% 20%, rgba(228,0,24,0.08), transparent 45%),
+                        radial-gradient(circle at 85% 80%, rgba(228,0,24,0.05), transparent 45%),
+                        #1A1A1A;
         }
-        .audit-btn {
-            font-family: inherit;
-            font-size: 0.8em;
-            padding: 18px 25px;
-            background: #44475a;
-            color: #f8f8f2;
-            border: 2px solid transparent;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: all 0.2s ease;
+
+        .reveal {
+            color: var(--kfc-white);
+            font-family: 'Arial', 'Helvetica Neue', Helvetica, sans-serif;
+            font-size: 26px;
+        }
+
+        .reveal .slides section {
+            padding: 20px 40px;
             text-align: left;
+            line-height: 1.4;
         }
-        .audit-btn:hover {
-            background: #4d5166;
-            border-color: var(--dracula-comment);
+
+        .reveal .slides section.center {
+            text-align: center;
         }
-        .audit-btn.active {
-            background: var(--dracula-pink);
-            color: #ffffff;
-            border-color: #f1fa8c;
-            box-shadow: 0 0 15px rgba(255, 121, 198, 0.4);
+
+        /* Заголовки */
+        .reveal h1, .reveal h2, .reveal h3, .reveal h4 {
+            color: var(--kfc-red) !important;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            margin-bottom: 0.4em;
+            font-family: 'Arial Black', 'Helvetica Neue', sans-serif;
         }
-        .result-box {
-            padding: 25px;
-            background: #282a36;
-            border-left: 5px solid var(--dracula-green);
-            border-radius: 4px;
+
+        .reveal h1 {
+            font-size: 2.4em;
+            line-height: 1.1;
+        }
+
+        .reveal h2 {
+            font-size: 1.5em;
+            border-left: 8px solid var(--kfc-red);
+            padding-left: 20px;
+        }
+
+        .reveal h3 {
+            font-size: 1.05em;
+            color: var(--kfc-white) !important;
+        }
+
+        .reveal p {
+            margin: 0.5em 0;
+        }
+
+        .reveal strong, .reveal b {
+            color: var(--kfc-red);
+        }
+
+        /* Теги разделов (01 / ВХОД В ТЕМУ) */
+        .section-tag {
+            display: inline-block;
+            font-size: 0.55em;
+            letter-spacing: 0.15em;
+            color: var(--kfc-red);
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 0.8em;
+            padding: 4px 12px;
+            border: 2px solid var(--kfc-red);
+            border-radius: 3px;
+        }
+
+        /* Декор-полоска под заголовками */
+        .kfc-stripe {
+            height: 6px;
+            width: 120px;
+            background: var(--kfc-stripe);
+            margin: 12px 0 24px;
+        }
+
+        /* ============================================================
+           КАРТОЧКИ
+           ============================================================ */
+        .card-grid {
+            display: grid;
+            gap: 18px;
+            margin-top: 24px;
+        }
+        .card-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+        .card-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+        .card-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+        .card-grid.cols-5 { grid-template-columns: repeat(5, 1fr); }
+
+        .kfc-card {
+            background: #222;
+            border: 1px solid #333;
+            border-left: 5px solid var(--kfc-red);
+            border-radius: 6px;
+            padding: 18px 20px;
+            position: relative;
+            transition: transform 0.15s ease, border-color 0.15s ease;
+        }
+        .kfc-card:hover {
+            transform: translateY(-3px);
+            border-color: var(--kfc-red);
+        }
+        .kfc-card h3 {
+            color: var(--kfc-red) !important;
+            font-size: 1em;
+            margin: 0 0 8px;
+        }
+        .kfc-card p {
+            font-size: 0.62em;
+            color: #ddd;
+            margin: 0;
+            line-height: 1.4;
+        }
+
+        /* Карточки с «батарейкой» (красный акцент сверху) */
+        .kfc-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: var(--kfc-red);
+            border-radius: 6px 6px 0 0;
+        }
+        .kfc-card.no-top-bar::before { display: none; }
+
+        /* Highlight box */
+        .highlight-box {
+            margin-top: 28px;
+            padding: 20px 24px;
+            background: rgba(228, 0, 24, 0.1);
+            border: 1px solid rgba(228, 0, 24, 0.35);
+            border-radius: 6px;
+            font-size: 0.75em;
+            line-height: 1.5;
+        }
+        .highlight-box strong { color: var(--kfc-red); }
+
+        /* ============================================================
+           СПЕЦИАЛЬНЫЕ СЛАЙДЫ
+           ============================================================ */
+        /* Title slide */
+        .title-slide h1 {
+            font-size: 3em;
+            margin: 0.2em 0;
+        }
+        .title-slide .subtitle {
+            font-size: 0.9em;
+            color: #ddd;
+            margin: 1em 0;
+        }
+        .title-slide .sub-subtitle {
+            font-size: 0.6em;
+            color: var(--kfc-gray);
+            margin-bottom: 2em;
+        }
+        .title-slide .section-num {
+            color: var(--kfc-red);
+            font-size: 0.55em;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 10px 24px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.55em;
+            color: #888;
+            margin-top: 2em;
+            padding-top: 20px;
+            border-top: 2px solid #333;
+        }
+        .status-bar .danger { color: var(--kfc-red); font-weight: 700; }
+
+        /* Stats (большие числа) */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            margin: 30px 0;
+        }
+        .stat-big {
+            text-align: center;
+            padding: 24px 16px;
+            background: #222;
+            border-top: 6px solid var(--kfc-red);
+            border-radius: 0 0 6px 6px;
+        }
+        .stat-big .num {
+            font-family: 'Arial Black', sans-serif;
+            font-size: 2.6em;
+            color: var(--kfc-red);
+            line-height: 1;
+            margin-bottom: 10px;
+        }
+        .stat-big .label {
+            font-size: 0.55em;
+            color: #ccc;
+            line-height: 1.35;
+        }
+
+        /* Двухколоночный блок */
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
             margin-top: 20px;
         }
-        .hint {
+        .two-col h3 { color: var(--kfc-red) !important; }
+
+        /* QR-заглушка */
+        .qr-placeholder {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 90px;
+            height: 90px;
+            background: #fff;
+            color: #111;
+            border-radius: 4px;
             font-size: 0.5em;
-            color: var(--dracula-comment);
-            margin-top: 30px;
+            font-weight: 700;
+            text-align: center;
+            padding: 6px;
+            margin: 8px;
+        }
+        .qr-placeholder .icon {
+            font-size: 1.8em;
+            color: var(--kfc-red);
+            line-height: 1;
+        }
+
+        /* ============================================================
+           ИНТЕРАКТИВНЫЙ ЧЕК-ЛИСТ
+           ============================================================ */
+        .checklist {
+            list-style: none;
+            padding: 0;
+            margin: 20px 0;
+        }
+        .checklist li {
+            padding: 10px 14px;
+            margin: 6px 0;
+            background: #222;
+            border-left: 4px solid #444;
+            border-radius: 4px;
+            font-size: 0.7em;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .checklist li:hover { background: #2a2a2a; }
+        .checklist li.checked {
+            border-left-color: var(--kfc-red);
+            background: rgba(228, 0, 24, 0.12);
+        }
+        .checklist li.checked .box {
+            background: var(--kfc-red);
+            border-color: var(--kfc-red);
+        }
+        .checklist li.checked .box::after {
+            content: '✓';
+            color: #fff;
+            font-size: 0.9em;
+            font-weight: 900;
+        }
+        .checklist .box {
+            width: 22px;
+            height: 22px;
+            border: 2px solid #666;
+            border-radius: 4px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+        }
+        .checklist-summary {
+            padding: 16px 20px;
+            border-radius: 6px;
+            font-size: 0.7em;
+            margin-top: 16px;
+            transition: all 0.2s ease;
+        }
+        .summary-low { background: rgba(80, 250, 123, 0.12); border: 1px solid #50fa7b; }
+        .summary-mid { background: rgba(255, 184, 108, 0.12); border: 1px solid #ffb86c; }
+        .summary-high { background: rgba(228, 0, 24, 0.15); border: 1px solid var(--kfc-red); }
+
+        /* Мемы */
+        .meme-card {
+            background: var(--kfc-cream);
+            color: #111;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            font-size: 0.7em;
+        }
+        .meme-card .emoji {
+            font-size: 3em;
+            display: block;
+            margin-bottom: 12px;
+        }
+        .meme-card p {
+            color: #111;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        /* Главная мысль */
+        .final-quote {
+            font-size: 1.6em;
+            line-height: 1.25;
+            font-weight: 900;
+            text-align: center;
+            padding: 40px 20px;
+            font-family: 'Arial Black', sans-serif;
+        }
+        .final-quote .accent { color: var(--kfc-red); }
+
+        /* Прогресс и контролы */
+        .reveal .progress { color: var(--kfc-red); background: rgba(228,0,24,0.15); }
+        .reveal .controls { color: var(--kfc-red); }
+        .reveal .slide-number {
+            background: var(--kfc-red);
+            color: #fff;
+            border-radius: 4px;
+            font-weight: 700;
+        }
+
+        /* Адаптив */
+        @media (max-width: 1200px) {
+            .reveal { font-size: 22px; }
+            .card-grid.cols-5 { grid-template-columns: repeat(3, 1fr); }
         }
     </style>
 </head>
 <body>
 
-    <div class="reveal">
-        <div class="slides">
+<div class="reveal">
+<div class="slides">
 
-            <!-- СЛАЙД 1 -->
-            <section class="center">
-                <h1 style="color: var(--dracula-pink);">Интерактивный Аудит</h1>
-                <p>Проектирование целевой архитектуры приложения на лету</p>
-                <p class="hint">Используйте стрелки на клавиатуре или нажимайте <span style="color: var(--dracula-cyan);">Вправо →</span> для навигации</p>
-            </section>
+<!-- ============================================================
+     1. ТИТУЛЬНЫЙ СЛАЙД
+     ============================================================ -->
+<section class="center title-slide">
+    <p class="section-num">Доклад для QA-команды</p>
+    <h1>Выгорание в QA</h1>
+    <p class="subtitle">Когда тестировать приходится не только продукт,<br>но и собственные нервы</p>
+    <div class="kfc-stripe" style="margin: 30px auto;"></div>
+    <p class="sub-subtitle">Психологическое состояние тестировщиков<br>в эпоху искусственного интеллекта</p>
 
-            <!-- СЛАЙД 2 -->
-            <section>
-                <h2>Шаг 1: Фокус оптимизации</h2>
-                <p>Какое техническое свойство системы является для вас определяющим?</p>
+    <div class="status-bar">
+        <span>QA.exe status: <b style="color:#50fa7b;">running</b></span>
+        <span>memory: 98%</span>
+        <span>context switches: 47</span>
+        <span>AI assistant: enabled</span>
+        <span class="danger">human battery: 3%</span>
+    </div>
+</section>
 
-                <div x-data class="options-container">
-                    <button class="audit-btn"
-                            :class="$store.audit.answers.strategy === 'speed' ? 'active' : ''"
-                            @click="$store.audit.setAnswer('strategy', 'speed')">
-                        ⚡ <strong>Максимальное быстродействие</strong> — выжимаем предел из вычислений, важен моментальный отклик интерфейса.
-                    </button>
-                    <button class="audit-btn"
-                            :class="$store.audit.answers.strategy === 'maintain' ? 'active' : ''"
-                            @click="$store.audit.setAnswer('strategy', 'maintain')">
-                        🛠 <strong>Удобство поддержки</strong> — чистота кодовой базы, модульность и легкость внесения изменений.
-                    </button>
-                </div>
-            </section>
+<!-- ============================================================
+     2. ЗАЧЕМ ГОВОРИТЬ
+     ============================================================ -->
+<section>
+    <span class="section-tag">01 / Вход в тему</span>
+    <h2>Зачем говорить об этом сейчас</h2>
+    <div class="kfc-stripe"></div>
 
-            <!-- СЛАЙД 3 -->
-            <section>
-                <h2>Шаг 2: Условия исполнения</h2>
-                <p>Каковы ключевые ограничения среды выполнения?</p>
-
-                <div x-data class="options-container">
-                    <button class="audit-btn"
-                            :class="$store.audit.answers.environment === 'local' ? 'active' : ''"
-                            @click="$store.audit.setAnswer('environment', 'local')">
-                        💻 <strong>Локальное окружение</strong> — запуск непосредственно на устройстве пользователя при ограниченных ресурсах.
-                    </button>
-                    <button class="audit-btn"
-                            :class="$store.audit.answers.environment === 'cloud' ? 'active' : ''"
-                            @click="$store.audit.setAnswer('environment', 'cloud')">
-                        ☁ <strong>Серверная инфраструктура</strong> — распределенная среда, выделенные сервера или облачный хостинг.
-                    </button>
-                </div>
-            </section>
-
-            <!-- СЛАЙД 4 -->
-            <section>
-                <h2>Результаты экспресс-анализа</h2>
-
-                <div x-data>
-                    <div x-show="!$store.audit.isComplete()" style="color: #ffb86c;" x-transition>
-                        <p>⚠️ <strong>Внимание:</strong> Для построения архитектурной модели не хватает данных.</p>
-                        <p>Пожалуйста, вернитесь на предыдущие слайды и выберите параметры.</p>
-                    </div>
-
-                    <div x-show="$store.audit.isComplete()" x-transition>
-                        <p>На основе зафиксированных метрик сформирован следующий технологический стек:</p>
-
-                        <div class="result-box">
-                            <template x-if="$store.audit.answers.strategy === 'speed' && $store.audit.answers.environment === 'local'">
-                                <div>
-                                    <h3 style="color: var(--dracula-green); margin-top: 0;">Низкоуровневая Edge-оптимизация</h3>
-                                    <p>Вам необходимо минимизировать runtime-накладные расходы. Рекомендуется использовать компилируемые в <strong>WebAssembly</strong> модули, легковесные движки на C/C++ или шейдерные вычисления в браузере (WebGL/WebNN).</p>
-                                </div>
-                            </template>
-
-                            <template x-if="$store.audit.answers.strategy === 'speed' && $store.audit.answers.environment === 'cloud'">
-                                <div>
-                                    <h3 style="color: var(--dracula-green); margin-top: 0;">Высоконагруженный (Highload) бэкенд</h3>
-                                    <p>Оптимальным решением станет асинхронный неблокирующий ввод-вывод, построение очередей и резидентные базы данных (In-Memory DB). В браузере применяется агрессивное кэширование и потоковая передача чанков данных.</p>
-                                </div>
-                            </template>
-
-                            <template x-if="$store.audit.answers.strategy === 'maintain' && $store.audit.answers.environment === 'local'">
-                                <div>
-                                    <h3 style="color: var(--dracula-cyan); margin-top: 0;">Модульный автономный монолит</h3>
-                                    <p>Наилучший выбор — чистая архитектура в рамках одного контекста. Весь исходный код должен находиться перед глазами (Single-File Component подход). Для интерфейса идеально подходит реактивное декларативное связывание через <strong>Alpine.js</strong>.</p>
-                                </div>
-                            </template>
-
-                            <template x-if="$store.audit.answers.strategy === 'maintain' && $store.audit.answers.environment === 'cloud'">
-                                <div>
-                                    <h3 style="color: var(--dracula-cyan); margin-top: 0;">Чистая многослойная архитектура</h3>
-                                    <p>Рекомендуется жесткое разделение обязанностей (Separation of Concerns). Эндпоинты изолируются, обмен данными происходит через строго типизированные контракты (DTO), а бизнес-логика полностью отделена от деталей реализации бэкенда.</p>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
+    <div class="card-grid cols-3">
+        <div class="kfc-card">
+            <h3>Профессия меняется</h3>
+            <p>ИИ ускоряет часть задач, но меняет ожидания к роли QA.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Нагрузка не исчезла</h3>
+            <p>Нужно тестировать больше, проверять AI-результаты и учиться.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Человек остаётся ответственным</h3>
+            <p>Качество, риски и последствия релиза всё ещё требуют человеческого суждения.</p>
         </div>
     </div>
 
-    <!-- Reveal.js и инициализация — в конце body, но ВНУТРИ него -->
-    <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/reveal.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/plugin/highlight/highlight.js"></script>
+    <div class="highlight-box">
+        <strong>Главный вопрос:</strong> как сохранить профессиональную устойчивость, когда инструменты и правила игры меняются быстрее, чем мы успеваем адаптироваться?
+    </div>
+</section>
+
+<!-- ============================================================
+     3. МАРШРУТ
+     ============================================================ -->
+<section>
+    <span class="section-tag">01 / Карта</span>
+    <h2>Маршрут на 45 минут</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="two-col">
+        <div>
+            <h3>Что обсудим</h3>
+            <ul style="font-size:0.72em; line-height:1.7;">
+                <li>Что такое выгорание и как его заметить</li>
+                <li>Почему QA уязвимы к хроническому стрессу</li>
+                <li>Что ИИ меняет — и какие новые тревоги приносит</li>
+                <li>Что показывают российские и зарубежные данные</li>
+                <li>Самопроверка, тесты и обращение за помощью</li>
+            </ul>
+        </div>
+        <div>
+            <h3>Результат встречи</h3>
+            <p style="font-size:0.75em; color:#ddd;">Не диагноз и не волшебная таблетка.</p>
+            <p style="font-size:0.75em; color:#ddd;">А понятные ориентиры: что со мной происходит, что можно изменить самому и когда стоит обратиться за поддержкой.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================
+     4. ЧТО ТАКОЕ ВЫГОРАНИЕ
+     ============================================================ -->
+<section>
+    <span class="section-tag">02 / База</span>
+    <h2>Выгорание простыми словами</h2>
+    <div class="kfc-stripe"></div>
+
+    <p style="font-size:0.8em;">Это не «я устал после сложного спринта». Это состояние, когда длительный рабочий стресс не удаётся нормально компенсировать отдыхом.</p>
+
+    <div class="card-grid cols-2" style="margin-top:30px;">
+        <div class="kfc-card">
+            <h3>Простая метафора</h3>
+            <p>Батарея разряжается быстрее, чем успевает заряжаться.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Позиция ВОЗ</h3>
+            <p>Выгорание — профессиональный феномен, связанный именно с хроническим стрессом на работе.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:24px;">
+        Это <strong>не диагноз</strong> по одному симптому и <strong>не характеристика слабого человека</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     5. ТРИ ЯДРА
+     ============================================================ -->
+<section>
+    <span class="section-tag">02 / База</span>
+    <h2>Три ядра выгорания</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:30px;">
+        <div class="kfc-card">
+            <h3>01 · Истощение</h3>
+            <p>«У меня больше нет энергии». Даже обычные задачи требуют непропорционально много сил.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>02 · Дистанция и цинизм</h3>
+            <p>«Мне всё равно». Раздражают коллеги, продукт, пользователи и сама мысль о работе.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>03 · Снижение эффективности</h3>
+            <p>«Я стал хуже работать». Сложнее концентрироваться, принимать решения и видеть результат.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box">
+        Обычно это не три отдельных проблемы, а <strong>связанные части одной картины</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     6. ПРИЗНАКИ
+     ============================================================ -->
+<section>
+    <span class="section-tag">02 / Признаки</span>
+    <h2>Как это выглядит в жизни тестировщика</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:20px;">
+        <div class="kfc-card">
+            <h3>В теле</h3>
+            <ul style="font-size:0.62em; line-height:1.7; padding-left:18px; color:#ddd;">
+                <li>Усталость уже утром</li>
+                <li>Сон не восстанавливает</li>
+                <li>Головные боли / напряжение</li>
+                <li>Частые простуды или упадок сил</li>
+            </ul>
+        </div>
+        <div class="kfc-card">
+            <h3>В голове</h3>
+            <ul style="font-size:0.62em; line-height:1.7; padding-left:18px; color:#ddd;">
+                <li>Трудно удерживать контекст</li>
+                <li>Забываются детали сценариев</li>
+                <li>Сложно начать задачу</li>
+                <li>Ошибки внимания и памяти</li>
+            </ul>
+        </div>
+        <div class="kfc-card">
+            <h3>В поведении</h3>
+            <ul style="font-size:0.62em; line-height:1.7; padding-left:18px; color:#ddd;">
+                <li>Цинизм и раздражительность</li>
+                <li>Избегание сложных задач</li>
+                <li>Отстранение от команды</li>
+                <li>Работа «на автопилоте»</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:24px;">
+        Симптомы неспецифичны: похожее состояние могут вызывать и другие причины. <strong>Не ставьте себе диагноз по слайду.</strong>
+    </div>
+</section>
+
+<!-- ============================================================
+     7. СТРЕСС ≠ ВЫГОРАНИЕ
+     ============================================================ -->
+<section>
+    <span class="section-tag">02 / Отличаем</span>
+    <h2>Стресс ≠ выгорание</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="two-col" style="margin-top:24px;">
+        <div class="kfc-card">
+            <h3>Обычный стресс</h3>
+            <p style="font-size:0.7em;">Много задач → напряжение → после завершения нагрузки и отдыха постепенно возвращаются силы.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Выгорание</h3>
+            <p style="font-size:0.7em;">Нагрузка становится хронической → отдых перестаёт помогать как раньше → истощение, отстранение и ощущение неэффективности закрепляются.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:30px; font-size:0.85em;">
+        Проверочный вопрос: <strong>«Я восстанавливаюсь после отдыха — или только ненадолго перестаю падать?»</strong>
+    </div>
+</section>
+
+<!-- ============================================================
+     8. ПОЧЕМУ QA ТЯЖЕЛО
+     ============================================================ -->
+<section>
+    <span class="section-tag">03 / Специфика QA</span>
+    <h2>Почему QA может быть особенно тяжело</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-2" style="margin-top:24px;">
+        <div class="kfc-card">
+            <h3>Ответственность без полного контроля</h3>
+            <p>Отвечаем за качество, но не всегда управляем сроками, требованиями и архитектурой.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Невидимый результат</h3>
+            <p>Хорошая работа часто выглядит как «ничего не случилось».</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Контекст и переключения</h3>
+            <p>Регресс, баги, релиз, уточнения, поддержка — постоянные переключения внимания.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Ожидание фиксов и решений</h3>
+            <p>Ожидание фиксов, окружений, данных и решений может создавать бессилие.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box">
+        О дефектах вспоминают громко; о предотвращённых проблемах — <strong>редко</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     9. ЧТО ДОБАВИЛ ИИ
+     ============================================================ -->
+<section>
+    <span class="section-tag">03 / ИИ и нагрузка</span>
+    <h2>Что добавил ИИ в рабочую реальность QA</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:24px;">
+        <div class="kfc-card">
+            <h3>Снимает часть рутины</h3>
+            <p>Черновики тест-кейсов, тестовые данные, анализ логов, генерация кода и документации.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Добавляет новый слой контроля</h3>
+            <p>Нужно проверять корректность, полноту, безопасность и применимость AI-ответов.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Ускоряет ожидания</h3>
+            <p>Если задача стала быстрее, возникает вопрос: почему команда не делает вдвое больше?</p>
+        </div>
+    </div>
+
+    <div class="highlight-box">
+        ИИ может быть и ресурсом, и стрессором. Решает не только инструмент, но и <strong>способ его внедрения</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     10. НОВЫЕ ПСИХОЛОГИЧЕСКИЕ НАГРУЗКИ
+     ============================================================ -->
+<section>
+    <span class="section-tag">03 / Помимо burnout</span>
+    <h2>Новые психологические нагрузки</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:18px;">
+        <div class="kfc-card">
+            <h3>AI-тревожность</h3>
+            <p>«А вдруг моя роль больше не нужна?» Страх замены и неопределённость будущего.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Синдром самозванца</h3>
+            <p>«ИИ делает это за секунды — значит, я недостаточно хорош».</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Страх потери навыка</h3>
+            <p>«Если всё делегировать, разучусь думать и решать сам».</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Усталость от проверки</h3>
+            <p>Нужно проверять не только продукт, но и уверенные ошибки ИИ.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Сравнение и FOMO</h3>
+            <p>Постоянно кажется, что коллеги уже освоили больше AI-инструментов.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Размывание роли</h3>
+            <p>Неясно, где заканчивается работа тестировщика и начинается работа AI-агента.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================
+     11. ТЕХНОСТРЕСС
+     ============================================================ -->
+<section>
+    <span class="section-tag">03 / ИИ и нагрузка</span>
+    <h2>Техностресс: когда инструмент становится источником напряжения</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-5" style="margin-top:24px;">
+        <div class="kfc-card">
+            <h3>Техно-навязчивость</h3>
+            <p>Всегда на связи.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Техно-перегрузка</h3>
+            <p>Слишком много задач и данных.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Техно-неопределённость</h3>
+            <p>Непонятно, что учить дальше.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Техно-сложность</h3>
+            <p>Инструмент трудно освоить.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Техно-беспокойство</h3>
+            <p>Страх быть заменённым.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box">
+        Цепочка может выглядеть так: <strong>тревога → усталость → скептицизм → ощущение неэффективности</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     12. ЗАРУБЕЖНЫЕ ДАННЫЕ
+     ============================================================ -->
+<section>
+    <span class="section-tag">04 / Исследования</span>
+    <h2>Что говорят зарубежные данные о QA и ИИ</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="stats-row">
+        <div class="stat-big">
+            <div class="num">76%</div>
+            <div class="label">используют AI-инструменты в тестировании</div>
+        </div>
+        <div class="stat-big">
+            <div class="num">20%</div>
+            <div class="label">очень обеспокоены заменой своей роли</div>
+        </div>
+        <div class="stat-big">
+            <div class="num">56%</div>
+            <div class="label">команд всё ещё не справляются с объёмом тестирования</div>
+        </div>
+    </div>
+
+    <p style="font-size:0.65em; color:#888; margin-top:10px;">Katalon, State of Software Quality 2025 · 1 500+ QA-профессионалов</p>
+    <p style="font-size:0.6em; color:#888;">Это исследование не о выгорании: оно измеряет использование ИИ и тревогу о замене.</p>
+</section>
+
+<!-- ============================================================
+     13. ЗАРУБЕЖНЫЕ ИССЛЕДОВАНИЯ
+     ============================================================ -->
+<section>
+    <span class="section-tag">04 / Исследования</span>
+    <h2>Зарубежные исследования: польза и цена ускорения</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="two-col" style="margin-top:20px;">
+        <div class="kfc-card">
+            <h3>Microsoft Research / IEEE, 2025</h3>
+            <p style="font-size:0.65em; line-height:1.5;">«Dear Diary»: рандомизированное и дневниковое исследование в крупной международной компании.</p>
+            <p style="font-size:0.65em; line-height:1.5;">84% отметили положительные изменения рабочих практик; 66% — изменения в отношении к работе. У части это сопровождалось большей осознанностью необходимости не отставать от технологий.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Stack Overflow, 2025</h3>
+            <p style="font-size:0.65em; line-height:1.5;">46% разработчиков скорее не доверяют точности AI-ответов, 33% — доверяют.</p>
+            <p style="font-size:0.65em; line-height:1.5;">66% раздражают ответы «почти правильно»; 45% говорят, что отладка AI-кода может занимать больше времени.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================
+     14. РОССИЙСКИЕ ДАННЫЕ
+     ============================================================ -->
+<section>
+    <span class="section-tag">04 / Исследования</span>
+    <h2>Российские данные: три части одной картины</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:18px;">
+        <div class="kfc-card">
+            <h3>2ГИС · 570 тестировщиков · 2025</h3>
+            <p>36% пробуют ИИ, но ещё не встроили его в процессы; 22% не используют ИИ в тестировании. Частые сценарии: тестовый код — 34%, тест-кейсы — 28%, тестовые данные — 26%.</p>
+            <p style="color:#E40018; font-size:0.58em; margin-top:8px;">Это опрос о практиках QA, не о выгорании.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Russia Quality Report · 2025–2026</h3>
+            <p>470 IT-директоров и руководителей тестирования. 15% компаний активно применяют ИИ в продуктивных QA-процессах, 21% ведут пилоты, 30% изучают сценарии. Частый сценарий — генерация тест-кейсов из требований (52%).</p>
+            <p style="color:#E40018; font-size:0.58em; margin-top:8px;">Это взгляд со стороны организаций.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>PsyJournals · 2024</h3>
+            <p>192 IT-специалиста; 17,2% выборки — инженеры по тестированию. Выгорание оценивали ВАТ, изучали связь с офисной средой и профессиональным опытом. Данные собраны в 2022–2023 гг.</p>
+            <p style="color:#E40018; font-size:0.58em; margin-top:8px;">Влияние ИИ работа не исследовала.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:20px; font-size:0.65em;">
+        Среди этих источников нет исследования, которое напрямую измеряло бы изменение выгорания QA до и после внедрения ИИ.
+    </div>
+</section>
+
+<!-- ============================================================
+     15. МЕТОДОЛОГИЯ
+     ============================================================ -->
+<section>
+    <span class="section-tag">04 / Методология</span>
+    <h2>Как правильно читать исследования</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:18px;">
+        <div class="kfc-card">
+            <h3>1. Что измеряли?</h3>
+            <p>Katalon и 2ГИС спрашивали об использовании ИИ и рабочих практиках. Это не анкеты для диагностики выгорания.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>2. Кого спрашивали?</h3>
+            <p>QA-специалистов, разработчиков или более широкую IT-выборку? Разные группы нельзя автоматически приравнивать друг к другу.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>3. Что можно заключить?</h3>
+            <p>Можно говорить о новых инструментах и стрессорах. Нельзя утверждать, что ИИ стал причиной роста выгорания, без подходящего исследования.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:24px;">
+        <strong>Вывод:</strong> различаем факт, интерпретацию и гипотезу — и не обещаем данным больше, чем они измеряли.
+    </div>
+</section>
+
+<!-- ============================================================
+     16. ИНТЕРАКТИВНАЯ САМОПРОВЕРКА
+     ============================================================ -->
+<section x-data="selfCheck()">
+    <span class="section-tag">05 / Самопроверка</span>
+    <h2>Как проверить себя без самодиагностики</h2>
+    <div class="kfc-stripe"></div>
+
+    <p style="font-size:0.7em;">Посмотрите на последние 2–4 недели и отметьте, что про вас:</p>
+
+    <ul class="checklist">
+        <template x-for="(item, i) in items" :key="i">
+            <li :class="item.checked ? 'checked' : ''" @click="item.checked = !item.checked">
+                <span class="box"></span>
+                <span x-text="item.text"></span>
+            </li>
+        </template>
+    </ul>
+
+    <div class="checklist-summary" :class="summaryClass" x-show="checkedCount > 0" x-transition>
+        <strong x-text="summaryTitle"></strong>
+        <span x-text="summaryText"></span>
+    </div>
+
+    <p style="font-size:0.55em; color:#888; margin-top:12px;">
+        Это не диагностический тест. Если несколько пунктов устойчиво про вас — повод остановиться, поговорить с кем-то и оценить нагрузку.
+    </p>
+
     <script>
-        Reveal.initialize({
-            controls: true,
-            progress: true,
-            hash: true,
-            center: false,
-            transition: 'slide',
-            plugins: [ RevealHighlight ]
-        });
+        function selfCheck() {
+            return {
+                items: [
+                    { text: 'Я просыпаюсь уже уставшим(ей), даже после выходных.', checked: false },
+                    { text: 'Рабочие задачи вызывают больше раздражения или отвращения, чем раньше.', checked: false },
+                    { text: 'Мне сложнее сосредоточиться, помнить детали и принимать решения.', checked: false },
+                    { text: 'Я всё чаще думаю, что моя работа бессмысленна или я не справляюсь.', checked: false },
+                    { text: 'После работы почти не остаётся сил на жизнь вне работы.', checked: false },
+                    { text: 'Отдых помогает ненадолго или совсем не помогает.', checked: false }
+                ],
+                get checkedCount() {
+                    return this.items.filter(i => i.checked).length;
+                },
+                get summaryTitle() {
+                    if (this.checkedCount >= 4) return '🔴 Сильный сигнал. ';
+                    if (this.checkedCount >= 2) return '🟠 Есть повод задуматься. ';
+                    return '🟢 Пока немного, но следите за динамикой. ';
+                },
+                get summaryText() {
+                    if (this.checkedCount >= 4) return 'Несколько устойчивых симптомов — веская причина поговорить со специалистом и пересмотреть нагрузку.';
+                    if (this.checkedCount >= 2) return 'Стоит внимательнее посмотреть на восстановление и рабочие условия.';
+                    return 'Отмечайте, как меняется состояние от недели к неделе.';
+                },
+                get summaryClass() {
+                    if (this.checkedCount >= 4) return 'summary-high';
+                    if (this.checkedCount >= 2) return 'summary-mid';
+                    return 'summary-low';
+                }
+            };
+        }
     </script>
+</section>
+
+<!-- ============================================================
+     17. ГДЕ ПРОЙТИ
+     ============================================================ -->
+<section>
+    <span class="section-tag">05 / Инструменты</span>
+    <h2>Где пройти самопроверку по-русски</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-2" style="margin-top:18px;">
+        <div class="kfc-card">
+            <h3>ТЕТА — короткий ВАТ</h3>
+            <p>12 пунктов · около 4 минут. Русская версия ВАТ. Пороговые значения рассчитаны на выборке во Фландрии; российских норм пока нет.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>PsyTests — Бойко</h3>
+            <p>84 вопроса · бесплатно и анонимно. Методика В. В. Бойко (1996). В исходном описании ориентирована на профессии с интенсивным взаимодействием с людьми.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Online Test Pad — Бойко</h3>
+            <p>84 вопроса. Альтернативная площадка с той же методикой. Это не отдельная независимая методика и не дополнительная валидация.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Testometr — рабочее истощение</h3>
+            <p>Профиль по энергии, дистанции от работы и восстановлению. Инструмент самонаблюдения редакции; не официальный МВИ и не диагноз.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:20px; font-size:0.65em;">
+        Важно: <strong>русскоязычный сайт ≠ российские нормы</strong>. Онлайн-опросник — ориентир, а не диагноз; ответы и результаты не стоит публиковать в рабочем чате.
+    </div>
+</section>
+
+<!-- ============================================================
+     18. ЧТО ДЕЛАТЬ С РЕЗУЛЬТАТОМ
+     ============================================================ -->
+<section>
+    <span class="section-tag">05 / Интерпретация</span>
+    <h2>Что делать с результатом теста</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:20px;">
+        <div class="kfc-card">
+            <h3>Низкие показатели</h3>
+            <p>Не означает, что всё идеально. Смотрите на динамику и реальные изменения в самочувствии.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Повышенные показатели</h3>
+            <p>Это сигнал внимательнее посмотреть на нагрузку, восстановление и рабочую среду.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Сильные симптомы</h3>
+            <p>Не пытайтесь «перетерпеть» и не ставьте диагноз сами. Обратитесь к специалисту.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:24px;">
+        Не ждите, пока тест покажет «красную зону»: <strong>субъективное страдание уже достаточно веская причина попросить помощи</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     19. К КОМУ ОБРАЩАТЬСЯ
+     ============================================================ -->
+<section>
+    <span class="section-tag">06 / Поддержка</span>
+    <h2>К кому обращаться</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:20px;">
+        <div class="kfc-card">
+            <h3>Психолог / психотерапевт</h3>
+            <p>Поможет разобраться с эмоциями, стрессом, привычками и границами; подобрать подходящий подход, например КПТ.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Врач / психиатр</h3>
+            <p>Нужен, если симптомы тяжёлые, длительные, мешают функционировать, есть выраженная тревога, депрессивные симптомы или проблемы со сном. Может оценить медицинские причины.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Рабочие каналы</h3>
+            <p>Руководитель, HR, EAP/корпоративный психолог, врач по охране труда — чтобы менять нагрузку, приоритеты и условия работы.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:20px; font-size:0.75em; border-color: var(--kfc-red); background: rgba(228,0,24,0.2);">
+        ⚠️ При мыслях о самоповреждении или непосредственной опасности — <strong>нужна срочная помощь местных экстренных служб</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     20. СТИГМА
+     ============================================================ -->
+<section>
+    <span class="section-tag">06 / Снимаем стигму</span>
+    <h2>Стыдно ли обращаться к психологу?</h2>
+    <div class="kfc-stripe"></div>
+
+    <p style="font-size:0.85em; margin-top:20px;"><strong>Нет.</strong> Обращение за помощью — не признание слабости, а способ не доводить проблему до кризиса.</p>
+
+    <div class="card-grid cols-2" style="margin-top:30px;">
+        <div class="kfc-card">
+            <h3>Инженерная аналогия</h3>
+            <p>Мы не стыдимся вызывать специалиста, когда система работает нестабильно. С человеком — та же логика заботы, а не поломки.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Психолог — не судья</h3>
+            <p>Психолог — не судья и не начальник. Не нужно приходить с идеально сформулированной проблемой.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================
+     21. ГРАНИЦЫ
+     ============================================================ -->
+<section>
+    <span class="section-tag">06 / Границы</span>
+    <h2>Говорить ли команде? И нужно ли всё рассказывать?</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-2" style="margin-top:24px;">
+        <div class="kfc-card">
+            <h3>Не обязаны раскрывать личные подробности</h3>
+            <p>Можно сказать: «У меня сейчас высокая нагрузка, мне нужно пересмотреть приоритеты / сроки / дежурства». Достаточно сообщить то, что нужно для организации работы.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Можно говорить, если есть доверие</h3>
+            <p>Поддерживающая команда может помочь. Но выбирайте человека, объём информации и момент. Личные диагнозы, детали терапии и результаты тестов — ваша частная информация.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:24px;">
+        Практический принцип: делиться <strong>не всем состоянием, а тем, что нужно для безопасной и реалистичной работы</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     22. ЧТО МОЖЕТ ТЕСТИРОВЩИК
+     ============================================================ -->
+<section>
+    <span class="section-tag">07 / Практика</span>
+    <h2>Что может сделать сам тестировщик</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:20px;">
+        <div class="kfc-card">
+            <h3>Ограничить входящий поток</h3>
+            <p>Выключить лишние уведомления, договориться об окнах для чатов, защищать время концентрации.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Вернуть контроль</h3>
+            <p>Разбивать большие задачи, фиксировать критерии готовности, просить приоритеты вместо «всё срочно».</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Сделать ИИ помощником</h3>
+            <p>Проверять результат по чек-листу, не делегировать критическое суждение, учиться небольшими итерациями.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:24px;">
+        Мини-эксперимент на неделю: <strong>один рабочий стрессор → одно небольшое изменение → наблюдение за эффектом</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     23. ЧТО МОЖЕТ КОМАНДА
+     ============================================================ -->
+<section>
+    <span class="section-tag">07 / Системное решение</span>
+    <h2>Что может сделать команда и руководитель</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:20px;">
+        <div class="kfc-card">
+            <h3>Нагрузка и приоритеты</h3>
+            <p>Не превращать каждую экономию времени от ИИ в рост объёма задач. Учитывать время на проверку AI-результатов.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Безопасное внедрение</h3>
+            <p>Обучение, понятные правила, участие QA в выборе инструментов, время на освоение.</p>
+        </div>
+        <div class="kfc-card">
+            <h3>Психологическая безопасность</h3>
+            <p>Обсуждать ошибки и неопределённость без стыда; замечать невидимую работу по предотвращению дефектов.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:24px;">
+        Выгорание — не только индивидуальная проблема. <strong>Среда может как усиливать, так и снижать риск</strong>.
+    </div>
+</section>
+
+<!-- ============================================================
+     24. МЕМ-ПАУЗА
+     ============================================================ -->
+<section>
+    <span class="section-tag">07 / Разряжаем обстановку</span>
+    <h2>Небольшая мем-пауза: три знакомые ситуации</h2>
+    <div class="kfc-stripe"></div>
+
+    <div class="card-grid cols-3" style="margin-top:20px;">
+        <div class="meme-card">
+            <span class="emoji">😰</span>
+            <p>Попросил ИИ ускорить тестирование. Он сгенерировал ещё 1 000 тест-кейсов.</p>
+        </div>
+        <div class="meme-card">
+            <span class="emoji">🤖</span>
+            <p>ИИ: «Все тесты зелёные!»<br>QA: «А что именно мы проверили?»</p>
+        </div>
+        <div class="meme-card">
+            <span class="emoji">😤</span>
+            <p>Проверяю тесты, сгенерированные ИИ.<br>Моя батарейка: 1%.</p>
+        </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top:24px; font-size:0.65em; color:#aaa;">
+        Замените эти карточки на свои мем-картинки: достаточно вставить <code style="color: var(--kfc-red);">&lt;img src="..."&gt;</code> вместо эмодзи.
+    </div>
+</section>
+
+<!-- ============================================================
+     25. ГЛАВНАЯ МЫСЛЬ
+     ============================================================ -->
+<section class="center">
+    <span class="section-tag">08 / Завершение</span>
+    <div class="final-quote">
+        ИИ может ускорить тестирование.<br>
+        Но он <span class="accent">не должен ускорять истощение людей</span>.
+    </div>
+    <div class="kfc-stripe" style="margin: 30px auto;"></div>
+    <p style="font-size:0.9em; color:#ddd; margin-top:30px;">
+        Проверять качество — наша работа.<br>
+        Замечать состояние человека — тоже часть качества.
+    </p>
+    <p style="font-size:0.6em; color:#888; margin-top:60px;">Спасибо. Вопросы и обсуждение — отдельно.</p>
+</section>
+
+</div>
+</div>
+
+<!-- Reveal.js + Alpine.js init -->
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.0/plugin/highlight/highlight.js"></script>
+<script>
+    Reveal.initialize({
+        controls: true,
+        progress: true,
+        hash: true,
+        center: false,
+        transition: 'slide',
+        slideNumber: 'c/t',
+        width: 1200,
+        height: 750,
+        margin: 0.04,
+        plugins: [ RevealHighlight ]
+    });
+</script>
 </body>
 </html>
